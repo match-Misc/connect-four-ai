@@ -199,7 +199,7 @@ print(score)    # Output: -1
 
 ### WebAssembly
 
-The library is available on npm [here](https://www.npmjs.com/package/connect-four-ai),
+The library is available on npm [here](https://www.npmjs.com/package/connect-four-ai-wasm),
 and can be installed using the following command:
 
 ```shell
