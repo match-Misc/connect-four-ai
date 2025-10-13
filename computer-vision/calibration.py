@@ -48,6 +48,8 @@ class ConnectFourCalibrator:
         self.window_id = None
         self.texture_id = None
         self.status_text = ""
+        self.player1_legend_id = None
+        self.player2_legend_id = None
 
     def start_webcam(self):
         """Start webcam capture in a separate thread"""
@@ -190,11 +192,33 @@ class ConnectFourCalibrator:
                         0 <= x < adjusted_frame.shape[1]
                         and 0 <= y < adjusted_frame.shape[0]
                     ):
+                        # Determine circle color
+                        if col == 0:  # Player 1 column
+                            if self.calibration_complete and self.player1_color:
+                                color = tuple(self.player1_color)
+                            else:
+                                color = (
+                                    0,
+                                    0,
+                                    255,
+                                )  # Red highlight for Player 1 calibration
+                        elif col == 1:  # Player 2 column
+                            if self.calibration_complete and self.player2_color:
+                                color = tuple(self.player2_color)
+                            else:
+                                color = (
+                                    0,
+                                    255,
+                                    255,
+                                )  # Yellow highlight for Player 2 calibration
+                        else:
+                            color = (255, 0, 0)  # Blue for other columns
+
                         cv2.circle(
                             adjusted_frame,
                             (x, y),
                             self.hole_diameter // 2,
-                            (255, 0, 0),
+                            color,
                             2,
                         )
 
@@ -400,6 +424,19 @@ class ConnectFourCalibrator:
                     )
 
                     dpg.add_separator()
+                    dpg.add_text("Legend:")
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Player 1:")
+                        self.player1_legend_id = dpg.add_text(
+                            "Not calibrated", color=(255, 255, 255)
+                        )
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Player 2:")
+                        self.player2_legend_id = dpg.add_text(
+                            "Not calibrated", color=(255, 255, 255)
+                        )
+
+                    dpg.add_separator()
                     dpg.add_text("Status:")
                     self.status_text_id = dpg.add_text(self.status_text, wrap=350)
 
@@ -412,6 +449,13 @@ class ConnectFourCalibrator:
             if self.calibrate_colors():
                 self.calibration_complete = True
                 self.status_text = "Color calibration complete!"
+                # Update legend with calibrated colors
+                if self.player1_legend_id and self.player1_color:
+                    dpg.set_value(self.player1_legend_id, f"RGB{self.player1_color}")
+                    dpg.configure_item(self.player1_legend_id, color=self.player1_color)
+                if self.player2_legend_id and self.player2_color:
+                    dpg.set_value(self.player2_legend_id, f"RGB{self.player2_color}")
+                    dpg.configure_item(self.player2_legend_id, color=self.player2_color)
             else:
                 self.status_text = "Color calibration failed. Check board setup."
         else:
@@ -426,6 +470,13 @@ class ConnectFourCalibrator:
         self.corners = []
         self.calibration_complete = False
         self.status_text = "Corners reset. Click to define 4 corners."
+        # Reset legend
+        if self.player1_legend_id:
+            dpg.set_value(self.player1_legend_id, "Not calibrated")
+            dpg.configure_item(self.player1_legend_id, color=(255, 255, 255))
+        if self.player2_legend_id:
+            dpg.set_value(self.player2_legend_id, "Not calibrated")
+            dpg.configure_item(self.player2_legend_id, color=(255, 255, 255))
 
     def run_calibration(self):
         """Main calibration loop"""
