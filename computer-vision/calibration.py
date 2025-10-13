@@ -14,9 +14,12 @@ Usage: python calibration.py
 
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import cv2
+import dearpygui.dearpygui as dpg
 import numpy as np
 
 
@@ -35,83 +38,75 @@ class ConnectFourCalibrator:
         self.saturation = 100  # 0-200, 100=1.0
         self.brightness = 0  # -100 to 100
 
-        # Window names
-        self.main_window = "Connect Four Calibration"
-        self.trackbar_window = "Hole Alignment"
-
-        # Mouse callback variables
-        self.drawing = False
+        # Webcam and threading
+        self.cap = None
         self.current_frame = None
+        self.running = True
+        self.frame_lock = threading.Lock()
 
-    def mouse_callback(self, event, x, y, flags, param):
-        """Handle mouse events for defining board corners"""
-        if event == cv2.EVENT_LBUTTONDOWN:
+        # GUI elements
+        self.window_id = None
+        self.texture_id = None
+        self.status_text = ""
+
+    def start_webcam(self):
+        """Start webcam capture in a separate thread"""
+        self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            self.status_text = "Error: Could not open webcam"
+            return False
+
+        def capture_loop():
+            while self.running:
+                ret, frame = self.cap.read()
+                if ret:
+                    with self.frame_lock:
+                        self.current_frame = frame.copy()
+                time.sleep(0.033)  # ~30 FPS
+
+        self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
+        self.capture_thread.start()
+        return True
+
+    def stop_webcam(self):
+        """Stop webcam capture"""
+        self.running = False
+        if self.capture_thread.is_alive():
+            self.capture_thread.join()
+        if self.cap:
+            self.cap.release()
+
+    def mouse_callback(self, sender, app_data, user_data):
+        """Handle mouse clicks for defining board corners"""
+        # Get mouse position relative to the viewport
+        mouse_x, mouse_y = dpg.get_mouse_pos()
+
+        # Get the position of the image widget
+        image_pos = dpg.get_item_pos(self.image_id)
+
+        # Calculate relative position within the image
+        rel_x = mouse_x - image_pos[0]
+        rel_y = mouse_y - image_pos[1]
+
+        # Debug: print the coordinates
+        print(
+            f"Mouse click at viewport: ({mouse_x}, {mouse_y}), image pos: ({image_pos[0]}, {image_pos[1]}), relative: ({rel_x}, {rel_y})"
+        )
+
+        # Check if click is within image bounds (640x480)
+        if 0 <= rel_x < 640 and 0 <= rel_y < 480:
             if len(self.corners) < 4:
-                self.corners.append((x, y))
-                print(f"Corner {len(self.corners)} set at ({x}, {y})")
+                # Scale coordinates to match actual image size if needed
+                # For now, assume 1:1 mapping
+                self.corners.append((int(rel_x), int(rel_y)))
+                self.status_text = (
+                    f"Corner {len(self.corners)} set at ({int(rel_x)}, {int(rel_y)})"
+                )
+                print(f"Added corner {len(self.corners)}: {self.corners[-1]}")
                 if len(self.corners) == 4:
-                    print("All corners defined. Adjust hole parameters with sliders.")
-
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            # Reset corners
-            self.corners = []
-            print("Corners reset. Click to define 4 corners.")
-
-    def create_trackbars(self):
-        """Create OpenCV trackbars for hole alignment and image adjustments"""
-        cv2.namedWindow(self.trackbar_window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.trackbar_window, 600, 200)
-        cv2.createTrackbar(
-            "Diameter", self.trackbar_window, self.hole_diameter, 100, lambda x: None
-        )
-        cv2.createTrackbar(
-            "H Spacing", self.trackbar_window, self.h_spacing, 150, lambda x: None
-        )
-        cv2.createTrackbar(
-            "V Spacing", self.trackbar_window, self.v_spacing, 150, lambda x: None
-        )
-        cv2.createTrackbar(
-            "Contrast", self.trackbar_window, self.contrast, 200, lambda x: None
-        )
-        cv2.createTrackbar(
-            "Saturation", self.trackbar_window, self.saturation, 200, lambda x: None
-        )
-        cv2.createTrackbar(
-            "Brightness",
-            self.trackbar_window,
-            self.brightness + 100,
-            200,
-            lambda x: None,
-        )
-
-    def get_trackbar_values(self):
-        """Get current trackbar values"""
-        try:
-            self.hole_diameter = cv2.getTrackbarPos("Diameter", self.trackbar_window)
-            self.h_spacing = cv2.getTrackbarPos("H Spacing", self.trackbar_window)
-            self.v_spacing = cv2.getTrackbarPos("V Spacing", self.trackbar_window)
-            self.contrast = cv2.getTrackbarPos("Contrast", self.trackbar_window)
-            self.saturation = cv2.getTrackbarPos("Saturation", self.trackbar_window)
-            self.brightness = (
-                cv2.getTrackbarPos("Brightness", self.trackbar_window) - 100
-            )
-        except cv2.error:
-            # Trackbars not created yet or window closed
-            pass
-
-    def draw_corners(self, frame):
-        """Draw the defined corners on the frame"""
-        for i, corner in enumerate(self.corners):
-            cv2.circle(frame, corner, 5, (0, 255, 0), -1)
-            cv2.putText(
-                frame,
-                f"{i + 1}",
-                (corner[0] + 10, corner[1] - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
+                    self.status_text = (
+                        "All corners defined. Adjust hole parameters with sliders."
+                    )
 
     def adjust_image(self, frame):
         """Apply contrast, saturation, and brightness adjustments to the frame"""
@@ -131,6 +126,20 @@ class ConnectFourCalibrator:
         frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
         return frame
+
+    def draw_corners(self, frame):
+        """Draw the defined corners on the frame"""
+        for i, corner in enumerate(self.corners):
+            cv2.circle(frame, corner, 5, (0, 255, 0), -1)
+            cv2.putText(
+                frame,
+                f"{i + 1}",
+                (corner[0] + 10, corner[1] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
+            )
 
     def draw_hole_grid(self, frame):
         """Draw the hole grid based on current parameters"""
@@ -192,13 +201,13 @@ class ConnectFourCalibrator:
             return adjusted_frame
         return frame
 
-    def calibrate_colors(self, frame):
+    def calibrate_colors(self):
         """Calibrate player colors from the first two columns"""
-        if len(self.corners) != 4:
+        if len(self.corners) != 4 or self.current_frame is None:
             return False
 
         # Apply image adjustments before calibration
-        adjusted_frame = self.adjust_image(frame)
+        adjusted_frame = self.adjust_image(self.current_frame)
 
         # Sort corners properly
         corners = np.array(self.corners)
@@ -257,8 +266,7 @@ class ConnectFourCalibrator:
             # Average the samples
             self.player1_color = np.mean(player1_samples, axis=0).astype(int).tolist()
             self.player2_color = np.mean(player2_samples, axis=0).astype(int).tolist()
-            print(f"Player 1 color calibrated: {self.player1_color}")
-            print(f"Player 2 color calibrated: {self.player2_color}")
+            self.status_text = f"Player 1 color: {self.player1_color}, Player 2 color: {self.player2_color}"
             return True
 
         return False
@@ -266,7 +274,9 @@ class ConnectFourCalibrator:
     def save_calibration(self, filename="calibration.json"):
         """Save calibration data to JSON file"""
         if not self.calibration_complete:
-            print("Calibration not complete. Please calibrate colors first.")
+            self.status_text = (
+                "Calibration not complete. Please calibrate colors first."
+            )
             return False
 
         data = {
@@ -284,117 +294,154 @@ class ConnectFourCalibrator:
         try:
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
-            print(f"Calibration saved to {filename}")
+            self.status_text = f"Calibration saved to {filename}"
             return True
         except Exception as e:
-            print(f"Error saving calibration: {e}")
+            self.status_text = f"Error saving calibration: {e}"
             return False
+
+    def update_frame(self):
+        """Update the displayed frame in the GUI"""
+        with self.frame_lock:
+            if self.current_frame is None:
+                return
+
+            frame = self.current_frame.copy()
+
+        # Draw corners and grid
+        self.draw_corners(frame)
+        if len(self.corners) == 4:
+            frame = self.draw_hole_grid(frame)
+
+        # Convert to RGB for Dear PyGui and normalize to 0-1 range
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+        # Update texture
+        if self.texture_id:
+            dpg.set_value(self.texture_id, frame_rgb.flatten())
+
+    def create_gui(self):
+        """Create the Dear PyGui interface"""
+        dpg.create_context()
+        dpg.create_viewport(title="Connect Four Calibration", width=1200, height=800)
+
+        with dpg.window(label="Calibration", width=1200, height=800) as self.window_id:
+            with dpg.group(horizontal=True):
+                # Left side - Image display
+                with dpg.child_window(width=800, height=600):
+                    dpg.add_text("Webcam Feed - Click to define corners")
+                    with dpg.texture_registry():
+                        # Create a placeholder texture (will be updated with actual frame)
+                        self.texture_id = dpg.add_raw_texture(
+                            640,
+                            480,
+                            np.zeros((640 * 480 * 3,), dtype=np.float32),
+                            format=dpg.mvFormat_Float_rgb,
+                        )
+                    self.image_id = dpg.add_image(
+                        self.texture_id, width=640, height=480
+                    )
+                    # Use mouse handlers instead of item handlers for better coordinate handling
+                    with dpg.handler_registry():
+                        dpg.add_mouse_click_handler(
+                            button=dpg.mvMouseButton_Left, callback=self.mouse_callback
+                        )
+                        dpg.add_mouse_click_handler(
+                            button=dpg.mvMouseButton_Right,
+                            callback=self.reset_corners_callback,
+                        )
+
+                # Right side - Controls
+                with dpg.child_window(width=380, height=600):
+                    dpg.add_text("Hole Parameters")
+                    dpg.add_slider_int(
+                        label="Diameter",
+                        default_value=self.hole_diameter,
+                        min_value=10,
+                        max_value=100,
+                        callback=lambda s, a: setattr(self, "hole_diameter", a),
+                    )
+
+                    dpg.add_separator()
+                    dpg.add_text("Image Adjustments")
+                    dpg.add_slider_int(
+                        label="Contrast",
+                        default_value=self.contrast,
+                        min_value=0,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "contrast", a),
+                    )
+                    dpg.add_slider_int(
+                        label="Saturation",
+                        default_value=self.saturation,
+                        min_value=0,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "saturation", a),
+                    )
+                    dpg.add_slider_int(
+                        label="Brightness",
+                        default_value=self.brightness + 100,
+                        min_value=0,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "brightness", a - 100),
+                    )
+
+                    dpg.add_separator()
+                    dpg.add_button(
+                        label="Calibrate Colors",
+                        callback=self.calibrate_colors_callback,
+                    )
+                    dpg.add_button(
+                        label="Save Calibration",
+                        callback=self.save_calibration_callback,
+                    )
+                    dpg.add_button(
+                        label="Reset Corners", callback=self.reset_corners_callback
+                    )
+
+                    dpg.add_separator()
+                    dpg.add_text("Status:")
+                    self.status_text_id = dpg.add_text(self.status_text, wrap=350)
+
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+
+    def calibrate_colors_callback(self, sender, app_data, user_data):
+        """Callback for calibrate colors button"""
+        if len(self.corners) == 4:
+            if self.calibrate_colors():
+                self.calibration_complete = True
+                self.status_text = "Color calibration complete!"
+            else:
+                self.status_text = "Color calibration failed. Check board setup."
+        else:
+            self.status_text = "Please define all 4 corners first."
+
+    def save_calibration_callback(self, sender, app_data, user_data):
+        """Callback for save calibration button"""
+        self.save_calibration()
+
+    def reset_corners_callback(self, sender, app_data, user_data):
+        """Callback for reset corners button"""
+        self.corners = []
+        self.calibration_complete = False
+        self.status_text = "Corners reset. Click to define 4 corners."
 
     def run_calibration(self):
         """Main calibration loop"""
-        # Initialize webcam
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("Error: Could not open webcam")
+        if not self.start_webcam():
             return False
 
-        # Set up windows and callbacks
-        cv2.namedWindow(self.main_window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.main_window, 800, 600)
-        cv2.setMouseCallback(self.main_window, self.mouse_callback)
-        self.create_trackbars()
+        self.create_gui()
 
-        print("Connect Four Board Calibration")
-        print("Instructions:")
-        print("1. Click 4 corners of the board (in any order)")
-        print(
-            "2. Adjust hole diameter, spacing, contrast, saturation, and brightness with sliders in the 'Hole Alignment' window"
-        )
-        print("3. Press 'c' to calibrate colors from first two columns")
-        print("4. Press 's' to save calibration to JSON")
-        print("5. Press 'r' to reset corners")
-        print("6. Press 'q' to quit")
-        print()
+        # Main loop
+        while dpg.is_dearpygui_running():
+            self.update_frame()
+            dpg.set_value(self.status_text_id, self.status_text)
+            dpg.render_dearpygui_frame()
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            self.current_frame = frame.copy()
-
-            # Draw corners and grid
-            self.draw_corners(frame)
-            if len(self.corners) == 4:
-                self.get_trackbar_values()
-                adjusted_frame = self.draw_hole_grid(frame)
-                # Use adjusted frame for display if adjustments are applied
-                if (
-                    self.contrast != 100
-                    or self.saturation != 100
-                    or self.brightness != 0
-                ):
-                    frame = adjusted_frame
-
-            # Display instructions
-            cv2.putText(
-                frame,
-                "Corners: Click to define 4 corners",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 255),
-                2,
-            )
-            if len(self.corners) == 4:
-                cv2.putText(
-                    frame,
-                    "Press 'c' to calibrate colors",
-                    (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 255, 255),
-                    2,
-                )
-                cv2.putText(
-                    frame,
-                    "Press 's' to save calibration",
-                    (10, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 255, 255),
-                    2,
-                )
-
-            cv2.imshow(self.main_window, frame)
-
-            key = cv2.waitKey(1) & 0xFF
-
-            if key != 255:  # Only process if a key was actually pressed
-                print(f"Key pressed: {key} (char: {chr(key) if key > 0 else 'none'})")
-
-            if key == ord("q"):
-                break
-            elif key == ord("c") and len(self.corners) == 4:
-                print("Attempting color calibration...")
-                if self.calibrate_colors(self.current_frame):
-                    self.calibration_complete = True
-                    print("Color calibration complete!")
-                    print(
-                        f"Current settings - Contrast: {self.contrast}, Saturation: {self.saturation}, Brightness: {self.brightness}"
-                    )
-                else:
-                    print("Color calibration failed. Check board setup.")
-            elif key == ord("s") and self.calibration_complete:
-                print("Saving calibration...")
-                self.save_calibration()
-            elif key == ord("r"):
-                self.corners = []
-                self.calibration_complete = False
-                print("Corners reset. Click to define 4 corners.")
-
-        cap.release()
-        cv2.destroyAllWindows()
+        self.stop_webcam()
+        dpg.destroy_context()
         return self.calibration_complete
 
 

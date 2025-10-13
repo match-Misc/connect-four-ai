@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
+    "dearpygui>=1.10.0",
 ]
 
 [tool.hatch.build.targets.wheel]
