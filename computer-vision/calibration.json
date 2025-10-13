@@ -1,0 +1,36 @@
+{
+  "corners": [
+    [
+      108,
+      102
+    ],
+    [
+      132,
+      391
+    ],
+    [
+      488,
+      78
+    ],
+    [
+      494,
+      370
+    ]
+  ],
+  "hole_diameter": 30,
+  "horizontal_spacing": 60,
+  "vertical_spacing": 60,
+  "player1_color": [
+    97,
+    100,
+    103
+  ],
+  "player2_color": [
+    131,
+    131,
+    141
+  ],
+  "contrast": 79,
+  "saturation": 142,
+  "brightness": -2
+}

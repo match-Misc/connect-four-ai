@@ -1,0 +1,16 @@
+[project]
+name = "connect-four-cv"
+version = "0.1.0"
+description = "Computer vision calibration for Connect Four board detection"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["calibration.py", "detection.py"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
