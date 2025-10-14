@@ -89,11 +89,6 @@ class ConnectFourCalibrator:
         rel_x = mouse_x - image_pos[0]
         rel_y = mouse_y - image_pos[1]
 
-        # Debug: print the coordinates
-        print(
-            f"Mouse click at viewport: ({mouse_x}, {mouse_y}), image pos: ({image_pos[0]}, {image_pos[1]}), relative: ({rel_x}, {rel_y})"
-        )
-
         # Check if click is within image bounds (640x480)
         if 0 <= rel_x < 640 and 0 <= rel_y < 480:
             if len(self.corners) < 4:
@@ -103,7 +98,6 @@ class ConnectFourCalibrator:
                 self.status_text = (
                     f"Corner {len(self.corners)} set at ({int(rel_x)}, {int(rel_y)})"
                 )
-                print(f"Added corner {len(self.corners)}: {self.corners[-1]}")
                 if len(self.corners) == 4:
                     # Detect corners based on position: top-left (min x+y), bottom-right (max x+y), then remaining by y
                     corners = self.corners
@@ -517,10 +511,8 @@ def main():
     success = calibrator.run_calibration()
 
     if success:
-        print("Calibration completed successfully!")
         return 0
     else:
-        print("Calibration was not completed.")
         return 1
 
 

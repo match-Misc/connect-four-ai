@@ -17,6 +17,9 @@ node_modules/
 .venv/
 __pycache__/
 
+# calibration
+calibration.json
+
 # AI Code Prep
 .aicodeprep-gui
 fullcode.txt

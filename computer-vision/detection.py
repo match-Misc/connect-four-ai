@@ -6,7 +6,7 @@ This script performs computer vision detection of the current state
 of a Connect Four board using a webcam and calibration data. It outputs
 two bitboards representing the positions of Player 1 and Player 2 pieces.
 
-Usage: python detection.py [--calibration CALIB_FILE] [--gui]
+Usage: python detection.py [--calibration CALIB_FILE]
 
 The bitboard representation uses 49 bits for the 6x7 grid:
     6 13 20 27 34 41 48
@@ -34,6 +34,10 @@ import numpy as np
 
 
 class ConnectFourDetector:
+    # Tunable parameters for detection
+    DETECTION_THRESHOLD = 55  # Color distance threshold for piece detection
+    CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
+
     def __init__(self, calibration_file="calibration.json"):
         self.calibration_file = calibration_file
         self.calibration_data = None
@@ -63,7 +67,7 @@ class ConnectFourDetector:
         self.player2_bitboard = 0
 
         # Robustness improvements
-        self.consistency_window = 1.0  # seconds
+        self.consistency_window = self.CONSISTENCY_WINDOW
         self.detection_history = []  # list of (timestamp, player1_mask, player2_mask)
 
     def load_calibration(self):
@@ -89,7 +93,6 @@ class ConnectFourDetector:
             self.saturation = self.calibration_data.get("saturation", 100)
             self.brightness = self.calibration_data.get("brightness", 0)
 
-            print(f"Calibration loaded from {self.calibration_file}")
             return True
         except FileNotFoundError:
             print(f"Error: Calibration file '{self.calibration_file}' not found")
@@ -109,11 +112,15 @@ class ConnectFourDetector:
             return False
 
         def capture_loop():
+            frame_count = 0
             while self.running:
                 ret, frame = self.cap.read()
                 if ret:
+                    frame_count += 1
                     with self.frame_lock:
                         self.current_frame = frame.copy()
+                else:
+                    print("Failed to read frame")
                 time.sleep(0.033)  # ~30 FPS
 
         self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
@@ -236,7 +243,7 @@ class ConnectFourDetector:
                         # Classify piece
                         # Use a threshold to determine if it's a piece or empty
                         min_dist = min(dist_p1, dist_p2)
-                        threshold = 50  # Adjust based on calibration quality
+                        threshold = self.DETECTION_THRESHOLD
 
                         if min_dist < threshold:
                             # Calculate bit position
@@ -473,14 +480,19 @@ class ConnectFourDetector:
         if not self.start_webcam():
             return None, None
 
-        # Wait a moment for camera to stabilize
-        time.sleep(0.5)
-
-        with self.frame_lock:
-            if self.current_frame is None:
-                self.stop_webcam()
-                return None, None
-            frame = self.current_frame.copy()
+        # Wait for camera to stabilize and capture initial frame
+        timeout = 5.0  # seconds
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            with self.frame_lock:
+                if self.current_frame is not None:
+                    frame = self.current_frame.copy()
+                    break
+            time.sleep(0.1)
+        else:
+            print("Timeout: No frame captured within 5 seconds")
+            self.stop_webcam()
+            return None, None
 
         player1_mask, player2_mask = self.detect_pieces(frame)
         # Enforce gravity for non-GUI mode as well
@@ -497,30 +509,14 @@ def main():
         default="calibration.json",
         help="Path to calibration JSON file (default: calibration.json)",
     )
-    parser.add_argument(
-        "--gui", action="store_true", help="Run with GUI for real-time detection"
-    )
 
     args = parser.parse_args()
 
     detector = ConnectFourDetector(args.calibration)
 
-    if args.gui:
-        success = detector.run_detection_gui()
-        if not success:
-            sys.exit(1)
-    else:
-        player1_mask, player2_mask = detector.get_bitboards()
-        if player1_mask is None or player2_mask is None:
-            print("Error: Could not detect board state")
-            sys.exit(1)
-
-        print(f"Player 1 bitboard: {player1_mask}")
-        print(f"Player 2 bitboard: {player2_mask}")
-        print("\nPlayer 1 Bitboard Visual:")
-        print(detector.format_bitboard(player1_mask))
-        print("\nPlayer 2 Bitboard Visual:")
-        print(detector.format_bitboard(player2_mask))
+    success = detector.run_detection_gui()
+    if not success:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
