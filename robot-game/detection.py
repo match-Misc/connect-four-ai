@@ -24,6 +24,7 @@ Each bit position corresponds to a hole on the board, with bit 0 at bottom-left.
 
 import argparse
 import json
+import socket
 import sys
 import threading
 import time
@@ -65,6 +66,11 @@ class ConnectFourDetector:
         # Detection results
         self.player1_bitboard = 0
         self.player2_bitboard = 0
+
+        # Socket server for exposing bitmasks
+        self.socket_server = None
+        self.socket_thread = None
+        self.socket_port = 65432  # Default port
 
         # Robustness improvements
         self.consistency_window = self.CONSISTENCY_WINDOW
@@ -134,6 +140,50 @@ class ConnectFourDetector:
             self.capture_thread.join()
         if self.cap:
             self.cap.release()
+
+    def start_socket_server(self):
+        """Start socket server to expose bitmasks"""
+        self.socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.socket_server.bind(("localhost", self.socket_port))
+            self.socket_server.listen(1)
+            print(f"Socket server listening on port {self.socket_port}")
+        except OSError as e:
+            print(f"Failed to start socket server: {e}")
+            return False
+
+        def server_loop():
+            while self.running:
+                try:
+                    conn, addr = self.socket_server.accept()
+                    with conn:
+                        while self.running:
+                            data = conn.recv(1024)
+                            if not data:
+                                break
+                            # Send current bitmasks as JSON
+                            response = json.dumps(
+                                {
+                                    "player1": self.player1_bitboard,
+                                    "player2": self.player2_bitboard,
+                                }
+                            ).encode("utf-8")
+                            conn.sendall(response)
+                except OSError:
+                    break  # Socket closed
+            self.socket_server.close()
+
+        self.socket_thread = threading.Thread(target=server_loop, daemon=True)
+        self.socket_thread.start()
+        return True
+
+    def stop_socket_server(self):
+        """Stop socket server"""
+        if self.socket_server:
+            self.socket_server.close()
+        if self.socket_thread and self.socket_thread.is_alive():
+            self.socket_thread.join()
 
     def adjust_image(self, frame):
         """Apply contrast, saturation, and brightness adjustments to the frame"""
@@ -461,6 +511,10 @@ class ConnectFourDetector:
         if not self.start_webcam():
             return False
 
+        if not self.start_socket_server():
+            self.stop_webcam()
+            return False
+
         self.create_gui()
 
         # Main loop
@@ -469,6 +523,7 @@ class ConnectFourDetector:
             dpg.render_dearpygui_frame()
 
         self.stop_webcam()
+        self.stop_socket_server()
         dpg.destroy_context()
         return True
 

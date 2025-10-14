@@ -1,7 +1,7 @@
 [project]
-name = "connect-four-cv"
+name = "connect-four-robot"
 version = "0.1.0"
-description = "Computer vision calibration for Connect Four board detection"
+description = "Computer vision calibration, board detection and robot interaction logic for Connect Four"
 requires-python = ">=3.11"
 dependencies = [
     "opencv-python>=4.8.0",
