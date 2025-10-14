@@ -16,7 +16,6 @@ import json
 import sys
 import threading
 import time
-from pathlib import Path
 
 import cv2
 import dearpygui.dearpygui as dpg
@@ -106,9 +105,9 @@ class ConnectFourCalibrator:
                 )
                 print(f"Added corner {len(self.corners)}: {self.corners[-1]}")
                 if len(self.corners) == 4:
-                    self.status_text = (
-                        "All corners defined. Adjust hole parameters with sliders."
-                    )
+                    # Sort corners by y-coordinate then x-coordinate to identify positions
+                    self.corners.sort(key=lambda p: (p[1], p[0]))
+                    self.status_text = "All corners defined and sorted. Adjust hole parameters with sliders."
 
     def adjust_image(self, frame):
         """Apply contrast, saturation, and brightness adjustments to the frame"""
@@ -131,11 +130,13 @@ class ConnectFourCalibrator:
 
     def draw_corners(self, frame):
         """Draw the defined corners on the frame"""
+        corner_names = ["top_left", "top_right", "bottom_left", "bottom_right"]
         for i, corner in enumerate(self.corners):
             cv2.circle(frame, corner, 5, (0, 255, 0), -1)
+            label = corner_names[i] if i < len(corner_names) else f"{i + 1}"
             cv2.putText(
                 frame,
-                f"{i + 1}",
+                label,
                 (corner[0] + 10, corner[1] - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -149,12 +150,8 @@ class ConnectFourCalibrator:
             # Apply image adjustments for visual feedback
             adjusted_frame = self.adjust_image(frame)
 
-            # Sort corners to get top-left, top-right, bottom-left, bottom-right
+            # Corners are already sorted in mouse_callback: top_left, top_right, bottom_left, bottom_right
             corners = np.array(self.corners)
-
-            # Sort corners by y-coordinate first (top vs bottom), then by x-coordinate (left vs right)
-            corners = corners[np.lexsort((corners[:, 0], corners[:, 1]))]
-            # corners[0] = top-left, corners[1] = top-right, corners[2] = bottom-left, corners[3] = bottom-right
 
             # Calculate perspective transform to map grid to corners
             # Define destination points (grid coordinates)
@@ -233,9 +230,8 @@ class ConnectFourCalibrator:
         # Apply image adjustments before calibration
         adjusted_frame = self.adjust_image(self.current_frame)
 
-        # Sort corners properly
+        # Corners are already sorted: top_left, top_right, bottom_left, bottom_right
         corners = np.array(self.corners)
-        corners = corners[np.lexsort((corners[:, 0], corners[:, 1]))]
 
         # Calculate perspective transform
         dst_points = np.array(
@@ -303,8 +299,16 @@ class ConnectFourCalibrator:
             )
             return False
 
+        # Create descriptive corner dictionary
+        corner_dict = {
+            "top_left": self.corners[0],
+            "top_right": self.corners[1],
+            "bottom_left": self.corners[2],
+            "bottom_right": self.corners[3],
+        }
+
         data = {
-            "corners": self.corners,
+            "corners": corner_dict,
             "hole_diameter": self.hole_diameter,
             "horizontal_spacing": self.h_spacing,
             "vertical_spacing": self.v_spacing,
