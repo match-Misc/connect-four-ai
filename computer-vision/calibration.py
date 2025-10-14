@@ -105,9 +105,21 @@ class ConnectFourCalibrator:
                 )
                 print(f"Added corner {len(self.corners)}: {self.corners[-1]}")
                 if len(self.corners) == 4:
-                    # Sort corners by y-coordinate then x-coordinate to identify positions
-                    self.corners.sort(key=lambda p: (p[1], p[0]))
-                    self.status_text = "All corners defined and sorted. Adjust hole parameters with sliders."
+                    # Detect corners based on position: top-left (min x+y), bottom-right (max x+y), then remaining by y
+                    corners = self.corners
+                    top_left = min(corners, key=lambda p: p[0] + p[1])
+                    bottom_right = max(corners, key=lambda p: p[0] + p[1])
+                    remaining = [
+                        p for p in corners if p not in [top_left, bottom_right]
+                    ]
+                    if remaining[0][1] < remaining[1][1]:
+                        top_right = remaining[0]
+                        bottom_left = remaining[1]
+                    else:
+                        top_right = remaining[1]
+                        bottom_left = remaining[0]
+                    self.corners = [top_left, top_right, bottom_left, bottom_right]
+                    self.status_text = "All corners defined and detected. Adjust hole parameters with sliders."
 
     def adjust_image(self, frame):
         """Apply contrast, saturation, and brightness adjustments to the frame"""
