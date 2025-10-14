@@ -1,34 +1,34 @@
 {
   "corners": {
     "top_left": [
-      118,
-      54
+      107,
+      49
     ],
     "top_right": [
-      499,
-      79
+      494,
+      71
     ],
     "bottom_left": [
-      64,
-      367
+      55,
+      364
     ],
     "bottom_right": [
-      522,
-      376
+      517,
+      377
     ]
   },
   "hole_diameter": 30,
   "horizontal_spacing": 60,
   "vertical_spacing": 60,
   "player1_color": [
-    121,
-    106,
-    212
+    126,
+    109,
+    211
   ],
   "player2_color": [
-    186,
-    231,
-    228
+    201,
+    227,
+    222
   ],
   "contrast": 100,
   "saturation": 100,

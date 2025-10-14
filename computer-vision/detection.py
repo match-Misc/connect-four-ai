@@ -62,6 +62,10 @@ class ConnectFourDetector:
         self.player1_bitboard = 0
         self.player2_bitboard = 0
 
+        # Robustness improvements
+        self.consistency_window = 1.0  # seconds
+        self.detection_history = []  # list of (timestamp, player1_mask, player2_mask)
+
     def load_calibration(self):
         """Load calibration data from JSON file"""
         try:
@@ -237,7 +241,8 @@ class ConnectFourDetector:
                         if min_dist < threshold:
                             # Calculate bit position
                             # Bitboard layout: bottom-left is bit 0, increases right then up
-                            bit_pos = row * 7 + col
+                            # row=0 is top, so bit_pos = (5 - row) * 7 + col
+                            bit_pos = (5 - row) * 7 + col
 
                             if dist_p1 < dist_p2:
                                 player1_mask |= 1 << bit_pos
@@ -245,6 +250,67 @@ class ConnectFourDetector:
                                 player2_mask |= 1 << bit_pos
 
         return player1_mask, player2_mask
+
+    def enforce_gravity(self, player1_mask, player2_mask):
+        """Enforce gravity: pieces can only be present if rows below are also present"""
+        combined_mask = player1_mask | player2_mask
+        enforced_p1 = 0
+        enforced_p2 = 0
+
+        for col in range(7):
+            # Collect pieces in this column from bottom to top (row 0 is bottom)
+            column_pieces = []
+            for row in range(6):
+                bit_pos = row * 7 + col
+                if combined_mask & (1 << bit_pos):
+                    column_pieces.append(bit_pos)
+
+            # Sort by row (bottom to top)
+            column_pieces.sort(key=lambda pos: pos // 7)
+
+            # Enforce gravity: only keep pieces from the bottom up, no gaps
+            valid_positions = []
+            for i, pos in enumerate(column_pieces):
+                expected_row = i  # 0 is bottom
+                actual_row = pos // 7
+                if actual_row == expected_row:
+                    valid_positions.append(pos)
+                else:
+                    # Gap detected, stop here
+                    break
+
+            # Assign back to players
+            for pos in valid_positions:
+                if player1_mask & (1 << pos):
+                    enforced_p1 |= 1 << pos
+                elif player2_mask & (1 << pos):
+                    enforced_p2 |= 1 << pos
+
+        return enforced_p1, enforced_p2
+
+    def check_consistency(self):
+        """Check if recent detections within the time window are consistent"""
+        if not self.detection_history:
+            return False
+
+        current_time = time.time()
+        # Filter recent detections
+        recent_detections = [
+            (p1, p2)
+            for ts, p1, p2 in self.detection_history
+            if current_time - ts <= self.consistency_window
+        ]
+
+        if len(recent_detections) < 2:
+            return False
+
+        # Check if all recent detections match
+        first_p1, first_p2 = recent_detections[0]
+        for p1, p2 in recent_detections[1:]:
+            if p1 != first_p1 or p2 != first_p2:
+                return False
+
+        return True
 
     def update_frame(self):
         """Update the displayed frame in the GUI"""
@@ -255,7 +321,25 @@ class ConnectFourDetector:
             frame = self.current_frame.copy()
 
         # Detect pieces
-        self.player1_bitboard, self.player2_bitboard = self.detect_pieces(frame)
+        raw_p1, raw_p2 = self.detect_pieces(frame)
+
+        # Enforce gravity
+        enforced_p1, enforced_p2 = self.enforce_gravity(raw_p1, raw_p2)
+
+        # Add to history with timestamp
+        current_time = time.time()
+        self.detection_history.append((current_time, enforced_p1, enforced_p2))
+
+        # Prune old entries outside the consistency window
+        self.detection_history = [
+            (ts, p1, p2)
+            for ts, p1, p2 in self.detection_history
+            if current_time - ts <= self.consistency_window
+        ]
+
+        # Check consistency and update bitboards only if consistent
+        if self.check_consistency():
+            self.player1_bitboard, self.player2_bitboard = enforced_p1, enforced_p2
 
         # Apply image adjustments for display
         frame = self.adjust_image(frame)
@@ -280,7 +364,7 @@ class ConnectFourDetector:
 
             for row in range(6):
                 for col in range(7):
-                    bit_pos = row * 7 + col
+                    bit_pos = (5 - row) * 7 + col
                     grid_x = col * self.h_spacing
                     grid_y = row * self.v_spacing
 
@@ -399,6 +483,8 @@ class ConnectFourDetector:
             frame = self.current_frame.copy()
 
         player1_mask, player2_mask = self.detect_pieces(frame)
+        # Enforce gravity for non-GUI mode as well
+        player1_mask, player2_mask = self.enforce_gravity(player1_mask, player2_mask)
         self.stop_webcam()
 
         return player1_mask, player2_mask
