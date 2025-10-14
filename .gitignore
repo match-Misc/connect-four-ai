@@ -15,3 +15,8 @@ book-*.bin
 
 node_modules/
 .venv/
+__pycache__/
+
+# AI Code Prep
+.aicodeprep-gui
+fullcode.txt
