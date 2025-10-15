@@ -13,6 +13,7 @@ Usage: python calibration.py
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -334,6 +335,48 @@ class ConnectFourCalibrator:
             self.status_text = f"Error saving calibration: {e}"
             return False
 
+    def save_grid_only(self, filename="calibration.json"):
+        """Save only grid calibration data, updating existing calibration.json"""
+        if len(self.corners) != 4:
+            self.status_text = "Please define all 4 corners first."
+            return False
+
+        if not os.path.exists(filename):
+            self.status_text = (
+                f"Error: {filename} does not exist. Please save full calibration first."
+            )
+            return False
+
+        try:
+            # Load existing calibration
+            with open(filename, "r") as f:
+                data = json.load(f)
+
+            # Update only grid-related fields
+            corner_dict = {
+                "top_left": self.corners[0],
+                "top_right": self.corners[1],
+                "bottom_left": self.corners[2],
+                "bottom_right": self.corners[3],
+            }
+            data["corners"] = corner_dict
+            data["hole_diameter"] = self.hole_diameter
+            data["horizontal_spacing"] = self.h_spacing
+            data["vertical_spacing"] = self.v_spacing
+            data["contrast"] = self.contrast
+            data["saturation"] = self.saturation
+            data["brightness"] = self.brightness
+
+            # Keep existing colors if they exist, but don't require them
+
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+            self.status_text = f"Grid calibration updated in {filename}"
+            return True
+        except Exception as e:
+            self.status_text = f"Error updating grid calibration: {e}"
+            return False
+
     def update_frame(self):
         """Update the displayed frame in the GUI"""
         with self.frame_lock:
@@ -430,6 +473,10 @@ class ConnectFourCalibrator:
                         callback=self.save_calibration_callback,
                     )
                     dpg.add_button(
+                        label="Save Grid Only",
+                        callback=self.save_grid_only_callback,
+                    )
+                    dpg.add_button(
                         label="Reset Corners", callback=self.reset_corners_callback
                     )
 
@@ -474,6 +521,10 @@ class ConnectFourCalibrator:
     def save_calibration_callback(self, sender, app_data, user_data):
         """Callback for save calibration button"""
         self.save_calibration()
+
+    def save_grid_only_callback(self, sender, app_data, user_data):
+        """Callback for save grid only button"""
+        self.save_grid_only()
 
     def reset_corners_callback(self, sender, app_data, user_data):
         """Callback for reset corners button"""

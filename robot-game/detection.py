@@ -36,7 +36,7 @@ import numpy as np
 
 class ConnectFourDetector:
     # Tunable parameters for detection
-    DETECTION_THRESHOLD = 55  # Color distance threshold for piece detection
+    DETECTION_THRESHOLD = 70  # Color distance threshold for piece detection
     CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
 
     def __init__(self, calibration_file="calibration.json"):
