@@ -46,6 +46,8 @@ class Board:
         "preview": (128, 128, 128),
         "preview-outline": (100, 100, 100),
         "hint-text": (156, 163, 175),  # gray-400
+        "winning": (255, 255, 0),  # bright yellow for winning pieces
+        "winning-outline": (200, 200, 0),
     }
 
     def __init__(self, surface_size=800) -> None:
@@ -67,6 +69,9 @@ class Board:
         # Hint scores display
         self.show_hints = False
         self.hint_scores = [None] * Board.COLS
+
+        # Winning positions for highlighting
+        self.winning_positions = set()  # Set of (row, col) tuples
 
         # Load colors from calibration.json
         self.COLOURS = Board.COLOURS.copy()
@@ -112,6 +117,7 @@ class Board:
         """Resets the board state."""
         self.grid = [[0 for _ in range(Board.COLS)] for _ in range(Board.ROWS)]
         self.heights = [0 for _ in range(Board.COLS)]
+        self.winning_positions.clear()
         self.update()
 
     def update(self):
@@ -127,16 +133,24 @@ class Board:
             for j, n in enumerate(row):
                 x = self.padding + self.board_x + self.cell_size * (j + 0.5)
                 y = self.padding + self.board_y + self.cell_size * (i + 0.5)
-                piece_type = ["empty", "player1", "player2"][n]
+                is_winning = (i, j) in self.winning_positions
+                if is_winning:
+                    piece_type = "winning"
+                    outline_color = self.COLOURS["winning-outline"]
+                    fill_color = self.COLOURS["winning"]
+                else:
+                    piece_type = ["empty", "player1", "player2"][n]
+                    outline_color = self.COLOURS[f"{piece_type}-outline"]
+                    fill_color = self.COLOURS[f"{piece_type}"]
                 pygame.draw.circle(
                     self.surface,
-                    self.COLOURS[f"{piece_type}-outline"],
+                    outline_color,
                     (x, y),
                     self.piece_radius,
                 )
                 pygame.draw.circle(
                     self.surface,
-                    self.COLOURS[f"{piece_type}"],
+                    fill_color,
                     (x, y),
                     self.piece_interior,
                 )
@@ -199,6 +213,8 @@ class GameWrapper:
         self.ai_move_displayed = False
         self.ai_move_column = -1
         self.human_turn = True
+        self.game_won = False
+        self.win_start_time = None
 
         # GUI elements
         self.window_id = None
@@ -330,9 +346,7 @@ class GameWrapper:
             return None
 
         try:
-            print(f"DEBUG: Getting AI move for position: {self.position}")
             move = self.ai_player.get_move(self.position)
-            print(f"DEBUG: AI move calculated: {move}")
             return move
         except Exception as e:
             print(f"Error getting AI move: {e}")
@@ -362,6 +376,45 @@ class GameWrapper:
 
         board_string = "".join(board_chars)
         self.position = Position.from_board_string(board_string)
+
+    def find_winning_positions(
+        self, player1_mask: int, player2_mask: int
+    ) -> set[tuple[int, int]]:
+        """Find all positions that are part of a winning four-in-a-row combination."""
+        winning_positions = set()
+
+        # Convert bitmasks to grid for easier checking
+        grid = self.bitmasks_to_grid(player1_mask, player2_mask)
+
+        # Check all possible four-in-a-row combinations
+        directions = [
+            (0, 1),
+            (1, 0),
+            (1, 1),
+            (1, -1),
+        ]  # horizontal, vertical, diagonal1, diagonal2
+
+        for row in range(6):
+            for col in range(7):
+                if grid[row][col] == 0:
+                    continue
+
+                player = grid[row][col]
+
+                for dr, dc in directions:
+                    # Check if we can form a line of 4 in this direction
+                    positions = []
+                    for i in range(4):
+                        r, c = row + i * dr, col + i * dc
+                        if 0 <= r < 6 and 0 <= c < 7 and grid[r][c] == player:
+                            positions.append((r, c))
+                        else:
+                            break
+
+                    if len(positions) == 4:
+                        winning_positions.update(positions)
+
+        return winning_positions
 
     def show_difficulty_menu(self):
         """Show the difficulty selection menu using Dear PyGui."""
@@ -534,9 +587,6 @@ class GameWrapper:
 
                 # Get current board state
                 current_p1, current_p2 = self.get_current_bitmasks()
-                print(
-                    f"DEBUG: current_p1={current_p1}, current_p2={current_p2}, human_turn={human_turn}"
-                )
 
                 # Update board visualization
                 self.update_board_from_bitmasks(current_p1, current_p2)
@@ -546,20 +596,28 @@ class GameWrapper:
 
                 # Check for game end
                 won = self.position.is_won_position()
-                print(
-                    f"DEBUG: position.is_won_position()={won}, human_turn={human_turn}"
-                )
-                if won:
+                if won and not self.game_won:
+                    # Game just ended, highlight winning positions
+                    self.game_won = True
+                    self.win_start_time = time.time()
+                    winning_positions = self.find_winning_positions(
+                        current_p1, current_p2
+                    )
+                    self.board.winning_positions = winning_positions
+                    self.board.update()
+
                     if human_turn:
                         self.update_game_status("Game Over - AI wins!")
                     else:
                         self.update_game_status("Game Over - You win!")
+
+                # Check if win highlight period is over (10 seconds)
+                if self.game_won and time.time() - self.win_start_time >= 10:
                     self.game_running = False
                     break
 
                 # Check if board is empty (game start)
                 is_empty = current_p1 == 0 and current_p2 == 0
-                print(f"DEBUG: is_empty={is_empty}")
                 if is_empty:
                     human_turn = True
                     self.ai_move_displayed = False
@@ -569,16 +627,14 @@ class GameWrapper:
                     if self.board.show_hints:
                         self.update_hint_scores()
 
-                # Check for human move
-                else:
+                # Check for human move (only if game not won)
+                elif not self.game_won:
                     changed = self.check_board_changed(
                         last_p1, last_p2, current_p1, current_p2
                     )
-                    print(f"DEBUG: board_changed={changed}")
                     if changed:
                         if human_turn:
                             # Human made a move, now it's AI's turn
-                            print("DEBUG: Human move detected, switching to AI turn")
                             human_turn = False
                             self.ai_move_displayed = False
                             self.update_game_status("AI is thinking...")
@@ -587,7 +643,6 @@ class GameWrapper:
                             self.board.ai_preview_column = -1
                         else:
                             # AI move was made, now human's turn
-                            print("DEBUG: AI move detected, switching to human turn")
                             human_turn = True
                             self.ai_move_displayed = False
                             self.update_game_status("Your turn!")
@@ -597,11 +652,9 @@ class GameWrapper:
                             if self.board.show_hints:
                                 self.update_hint_scores()
 
-                # AI's turn
-                if not human_turn and not self.ai_move_displayed:
-                    print("DEBUG: AI's turn, calculating move")
+                # AI's turn (only if game not won)
+                if not human_turn and not self.ai_move_displayed and not self.game_won:
                     ai_move = self.get_ai_move()
-                    print(f"DEBUG: ai_move={ai_move}")
                     if ai_move is not None:
                         self.ai_move_column = ai_move
                         self.board.ai_preview_column = ai_move
@@ -610,9 +663,6 @@ class GameWrapper:
                             f"AI will play in column {ai_move + 1}. Make your move!"
                         )
                         self.update_ai_move_display(ai_move)
-                        print(f"DEBUG: AI move displayed: column {ai_move + 1}")
-                    else:
-                        print("DEBUG: AI move calculation failed")
 
                 # Update last state
                 last_p1, last_p2 = current_p1, current_p2
@@ -631,7 +681,6 @@ class GameWrapper:
         except KeyboardInterrupt:
             print("Game interrupted")
         except Exception as e:
-            print(f"DEBUG: Exception in game loop: {e}")
             import traceback
 
             traceback.print_exc()
