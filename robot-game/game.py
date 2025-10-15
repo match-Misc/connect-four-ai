@@ -45,6 +45,7 @@ class Board:
         "player2-outline": (245, 158, 11),
         "preview": (128, 128, 128),
         "preview-outline": (100, 100, 100),
+        "hint-text": (156, 163, 175),  # gray-400
     }
 
     def __init__(self, surface_size=800) -> None:
@@ -62,6 +63,10 @@ class Board:
 
         # AI move preview
         self.ai_preview_column = -1
+
+        # Hint scores display
+        self.show_hints = False
+        self.hint_scores = [None] * Board.COLS
 
         # Load colors from calibration.json
         self.COLOURS = Board.COLOURS.copy()
@@ -161,6 +166,19 @@ class Board:
                     self.piece_interior,
                 )
 
+        # Draw hint scores if enabled
+        if self.show_hints:
+            font = pygame.font.SysFont(None, int(self.cell_size * 0.5))
+            for col in range(Board.COLS):
+                if self.hint_scores[col] is not None:
+                    x = self.padding + self.board_x + self.cell_size * (col + 0.5)
+                    y = self.padding + self.board_y - self.cell_size * 0.6
+                    text = font.render(
+                        str(self.hint_scores[col]), True, self.COLOURS["hint-text"]
+                    )
+                    text_rect = text.get_rect(center=(x, y))
+                    self.surface.blit(text, text_rect)
+
     def draw(self, target: Surface, pos: tuple = (0, 0)):
         """Draws the board onto the given target surface."""
         target.blit(self.surface, pos)
@@ -188,6 +206,7 @@ class GameWrapper:
         self.game_window_id = None
         self.status_text_id = None
         self.ai_move_text_id = None
+        self.hint_button_id = None
 
         # Pygame setup
         pygame.init()
@@ -411,13 +430,20 @@ class GameWrapper:
     def show_game_gui(self):
         """Show the game GUI with status and AI move display."""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four - Game Status", width=400, height=200)
+        dpg.create_viewport(title="Connect Four - Game Status", width=400, height=250)
 
         with dpg.window(
-            label="Game Status", width=400, height=200
+            label="Game Status", width=400, height=250
         ) as self.game_window_id:
             self.status_text_id = dpg.add_text("Initializing game...", pos=(10, 10))
             self.ai_move_text_id = dpg.add_text("AI Move: Waiting...", pos=(10, 40))
+            self.hint_button_id = dpg.add_button(
+                label="Show Hints",
+                pos=(10, 70),
+                width=100,
+                height=30,
+                callback=self.toggle_hints,
+            )
 
         dpg.setup_dearpygui()
         dpg.show_viewport()
@@ -436,6 +462,38 @@ class GameWrapper:
                 )
             else:
                 dpg.set_value(self.ai_move_text_id, "AI Move: Calculating...")
+
+    def toggle_hints(self):
+        """Toggle hint display on/off."""
+        self.board.show_hints = not self.board.show_hints
+        if self.hint_button_id:
+            dpg.set_item_label(
+                self.hint_button_id,
+                "Hide Hints" if self.board.show_hints else "Show Hints",
+            )
+        if self.board.show_hints:
+            self.update_hint_scores()
+        else:
+            self.board.hint_scores = [None] * Board.COLS
+
+    def update_hint_scores(self):
+        """Update the hint scores for display."""
+        if not self.ai_player or not self.board.show_hints:
+            self.board.hint_scores = [None] * Board.COLS
+            return
+
+        try:
+            # Get scores from AI's perspective, but we want to show them for the human player
+            # So we need to negate the scores since AI maximizes and human minimizes
+            scores = self.ai_player.get_all_move_scores(self.position)
+            # For human player (who minimizes), higher scores are better moves
+            # So we show the negated AI scores to make higher numbers better for human
+            self.board.hint_scores = [
+                -score if score is not None else None for score in scores
+            ]
+        except Exception as e:
+            print(f"Error getting hint scores: {e}")
+            self.board.hint_scores = [None] * Board.COLS
 
     def run_game(self):
         """Main game loop."""
@@ -507,6 +565,9 @@ class GameWrapper:
                     self.ai_move_displayed = False
                     self.update_game_status("Board is empty. Your turn!")
                     self.update_ai_move_display(None)
+                    # Update hint scores for empty board
+                    if self.board.show_hints:
+                        self.update_hint_scores()
 
                 # Check for human move
                 else:
@@ -532,6 +593,9 @@ class GameWrapper:
                             self.update_game_status("Your turn!")
                             # Reset preview when AI moves
                             self.board.ai_preview_column = -1
+                            # Update hint scores after AI move
+                            if self.board.show_hints:
+                                self.update_hint_scores()
 
                 # AI's turn
                 if not human_turn and not self.ai_move_displayed:
