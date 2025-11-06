@@ -94,21 +94,27 @@ Verify that the detection system works correctly with your calibrated setup.
 
 Start the full game experience with AI opponent.
 
-1. **Run the game script**:
+1. **Start the robot program**:
+   If you want to play against a physical robot, start the robot program before running the game script.
+   ```bash
+   vier_gewinnt.urp
+   ```
+
+2. **Run the game script**:
    ```bash
    python game.py
    ```
 
-2. **Select difficulty**:
+3. **Select difficulty**:
    - Choose from Easy, Medium, Hard, or Impossible AI difficulty
 
-3. **Play the game**:
+4. **Play the game**:
    - The system will detect your moves automatically via webcam
    - Wait for the AI to calculate and display its move
    - Make your physical move on the board when prompted
    - The game continues until someone wins or the board is full
 
-4. **Optional features**:
+5. **Optional features**:
    - Click "Show Hints" to display AI evaluation scores for each column
    - Winning positions are highlighted when the game ends
 
