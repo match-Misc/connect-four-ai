@@ -292,6 +292,11 @@ class GameWrapper:
                                 self.robot_client_socket.close()
                             except Exception:
                                 pass
+                        # Make client non-blocking to avoid blocking game loop on send
+                        try:
+                            conn.setblocking(False)
+                        except Exception:
+                            pass
                         self.robot_client_socket = conn
                     print(f"Robot client connected from {addr}")
                     # If there is a pending column (chosen before connection), send it now
@@ -302,10 +307,14 @@ class GameWrapper:
                     if pending is not None and send_conn:
                         try:
                             msg = (str(int(pending))).encode("ascii")
-                            send_conn.sendall(msg)
+                            # Non-blocking send; may raise BlockingIOError if not ready
+                            send_conn.send(msg)
                             print(f"Sent pending column to robot: {pending}")
                         except Exception as e:
                             print(f"Failed to send pending column to robot: {e}")
+                            # Re-queue if send didn't go through
+                            with self.robot_conn_lock:
+                                self.pending_column = pending
 
             self.robot_server_thread = threading.Thread(target=accept_loop, daemon=True)
             self.robot_server_thread.start()
@@ -323,12 +332,14 @@ class GameWrapper:
                 try:
                     self.robot_client_socket.close()
                 except Exception:
+                    print("Failed to close robot client socket")
                     pass
                 self.robot_client_socket = None
         if self.robot_server_socket:
             try:
                 self.robot_server_socket.close()
             except Exception:
+                print("Failed to close robot server socket")
                 pass
             self.robot_server_socket = None
         if self.robot_server_thread and self.robot_server_thread.is_alive():
@@ -338,26 +349,36 @@ class GameWrapper:
         """Send the chosen column to the connected robot client as a string (e.g., "3")."""
         if not self.robot_server_enabled:
             return
+        # Convert to 1-indexed for robot
+        col_to_send = int(col) + 1
+        # Grab current client under lock, but perform send without holding the lock
         with self.robot_conn_lock:
             conn = self.robot_client_socket
-            col = col + 1  # Convert to 1-indexed for robot
-            if not conn:
-                # No client yet; queue the column to send on next connect
-                self.pending_column = int(col)
-                print("No robot client connected; column queued.")
-                return
+        if not conn:
+            # No client yet; queue the column to send on next connect
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
+            print("No robot client connected; column queued.")
+            return
+        msg = (str(col_to_send)).encode("ascii")
+        try:
+            # Non-blocking send of small payload
+            conn.send(msg)
+            print(f"Sent column to robot: {col_to_send}")
+        except (BlockingIOError, TimeoutError):
+            # Try again on next connect or future opportunity
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
+            print("Robot socket not ready; column queued for resend.")
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            print(f"Robot client disconnected while sending column: {e}")
             try:
-                msg = (str(int(col))).encode("ascii")
-                conn.sendall(msg)
-                print(f"Sent column to robot: {col}")
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                print(f"Robot client disconnected while sending column: {e}")
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                # Queue to send on next reconnect
-                self.pending_column = int(col)
+                conn.close()
+            except Exception:
+                pass
+            # Queue to send on next reconnect
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
                 self.robot_client_socket = None
 
 
@@ -644,16 +665,16 @@ class GameWrapper:
     def show_game_gui(self):
         """Show the game GUI with status and AI move display."""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four - Game Status", width=400, height=250)
+        dpg.create_viewport(title="Connect Four - Game Status", width=600, height=400)
 
         with dpg.window(
-            label="Game Status", width=400, height=250
+            label="Game Status", width=600, height=400
         ) as self.game_window_id:
-            self.status_text_id = dpg.add_text("Initializing game...", pos=(10, 10))
-            self.ai_move_text_id = dpg.add_text("AI Move: Waiting...", pos=(10, 40))
+            self.status_text_id = dpg.add_text("Initializing game...", pos=(10, 30))
+            self.ai_move_text_id = dpg.add_text("AI Move: Waiting...", pos=(30, 70))
             self.hint_button_id = dpg.add_button(
                 label="Show Hints",
-                pos=(10, 70),
+                pos=(10, 100),
                 width=100,
                 height=30,
                 callback=self.toggle_hints,
@@ -771,9 +792,9 @@ class GameWrapper:
                     self.board.update()
 
                     if human_turn:
-                        self.update_game_status("Game Over - AI wins!")
-                    else:
                         self.update_game_status("Game Over - You win!")
+                    else:
+                        self.update_game_status("Game Over - AI wins!")
 
                 # Check if win highlight period is over (10 seconds)
                 if self.game_won and time.time() - self.win_start_time >= 10:

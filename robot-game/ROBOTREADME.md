@@ -47,6 +47,13 @@ The robot game allows you to play Connect Four against an AI opponent using a ph
 
 ## Usage
 
+1. **Activate the Python environment**:
+   Only needed when running on the nuc.
+   ```bash
+   cd ~/connect-four-ai
+   source ~/.pyenv/versions/connect4-3.13/bin/activate
+   ```
+
 ### Step 1: Board Calibration
 
 Before playing, you must calibrate the system to recognize your specific board setup.
