@@ -11,15 +11,38 @@ This script provides a complete game interface that:
 """
 
 import json
+import os
 import socket
 import subprocess
 import sys
+import threading
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 import dearpygui.dearpygui as dpg
 import pygame
-from connect_four_ai import AIPlayer, Difficulty, Position
+
+try:
+    from connect_four_ai import AIPlayer, Difficulty, Position
+except Exception as e:
+    # Provide a clearer, actionable error message when the Rust-backed
+    # `connect_four_ai` Python package isn't installed or importable.
+    print(
+        "Could not import the 'connect_four_ai' Python package.\n"
+        "This project provides a Rust-backed Python extension in `crates/python`.\n"
+        "To make it available to Python, either install the package from PyPI or build & install it locally.\n\n"
+        "Recommended local development steps (Linux / bash):\n"
+        "  cd crates/python\n"
+        "  python -m pip install --upgrade pip setuptools wheel maturin\n"
+        "  maturin develop --release\n\n"
+        "Or try installing from PyPI (if a prebuilt wheel exists for your Python):\n"
+        "  python -m pip install connect_four_ai\n\n"
+        "Original import error:",
+        e,
+    )
+    # Exit now since the rest of the module requires these symbols.
+    raise
 from pygame import Surface
 
 
@@ -217,10 +240,17 @@ class GameWrapper:
         self.game_won = False
         self.win_start_time = None
 
-        # Robot configuration
-        self.robot_ip = "localhost"
-        self.robot_port = 30002
-        self.load_robot_config()
+        # Robot/server integration (PC acts as server, robot as client)
+        # This PC will listen on a TCP port and send the AI's chosen column as a string (e.g., "3").
+        self.robot_server_enabled: bool = True
+        self.robot_server_host: str = os.environ.get("C4_SERVER_HOST", "0.0.0.0")
+        self.robot_server_port: int = int(os.environ.get("C4_SERVER_PORT", "30020"))
+        self.robot_server_socket: Optional[socket.socket] = None
+        self.robot_client_socket: Optional[socket.socket] = None
+        self.robot_server_thread: Optional[threading.Thread] = None
+        self.robot_server_running: bool = False
+        self.robot_conn_lock = threading.Lock()
+        self.pending_column = None
 
         # GUI elements
         self.window_id = None
@@ -236,16 +266,108 @@ class GameWrapper:
         pygame.display.set_caption("Connect Four - Human vs AI")
         self.clock = pygame.time.Clock()
 
-    def load_robot_config(self):
-        """Load robot configuration from robotconfig.json."""
+    def start_robot_server(self) -> bool:
+        """Start a simple TCP server that accepts a single client (robot).
+
+        When connected, send_robot_column will write the column as a string.
+        """
+        if not self.robot_server_enabled:
+            return True
         try:
-            with open("robotconfig.json", "r") as f:
-                config = json.load(f)
-            self.robot_ip = config.get("robot_ip", "localhost")
-            self.robot_port = config.get("robot_port", 30002)
-            print(f"Loaded robot config: {self.robot_ip}:{self.robot_port}")
+            self.robot_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.robot_server_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+            self.robot_server_socket.bind(
+                (self.robot_server_host, self.robot_server_port)
+            )
+            self.robot_server_socket.listen(1)
+            self.robot_server_running = True
+
+            def accept_loop():
+                while self.robot_server_running:
+                    try:
+                        self.robot_server_socket.settimeout(1.0)
+                        conn, addr = self.robot_server_socket.accept()
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+                    with self.robot_conn_lock:
+                        if self.robot_client_socket:
+                            try:
+                                self.robot_client_socket.close()
+                            except Exception:
+                                pass
+                        self.robot_client_socket = conn
+                    print(f"Robot client connected from {addr}")
+                    # If there is a pending column (chosen before connection), send it now
+                    with self.robot_conn_lock:
+                        pending = self.pending_column
+                        send_conn = self.robot_client_socket
+                        self.pending_column = None
+                    if pending is not None and send_conn:
+                        try:
+                            msg = (str(int(pending))).encode("ascii")
+                            send_conn.sendall(msg)
+                            print(f"Sent pending column to robot: {pending}")
+                        except Exception as e:
+                            print(f"Failed to send pending column to robot: {e}")
+
+            self.robot_server_thread = threading.Thread(target=accept_loop, daemon=True)
+            self.robot_server_thread.start()
+            print(
+                f"Robot server listening on {self.robot_server_host}:{self.robot_server_port}"
+            )
+            return True
         except Exception as e:
-            print(f"Could not load robotconfig.json, using defaults: {e}")
+            print(f"Failed to start robot server: {e}")
+            return False
+
+    def stop_robot_server(self):
+        """Stop the robot TCP server and any client connection."""
+        self.robot_server_running = False
+        with self.robot_conn_lock:
+            if self.robot_client_socket:
+                try:
+                    self.robot_client_socket.close()
+                except Exception:
+                    pass
+                self.robot_client_socket = None
+        if self.robot_server_socket:
+            try:
+                self.robot_server_socket.close()
+            except Exception:
+                pass
+            self.robot_server_socket = None
+        if self.robot_server_thread and self.robot_server_thread.is_alive():
+            self.robot_server_thread.join(timeout=2)
+
+    def send_robot_column(self, col: int):
+        """Send the chosen column to the connected robot client as a string (e.g., "3")."""
+        if not self.robot_server_enabled:
+            return
+        with self.robot_conn_lock:
+            conn = self.robot_client_socket
+            col = col + 1  # Convert to 1-indexed for robot
+            if not conn:
+                # No client yet; queue the column to send on next connect
+                self.pending_column = int(col)
+                print("No robot client connected; column queued.")
+                return
+            try:
+                msg = (str(int(col))).encode("ascii")
+                conn.sendall(msg)
+                print(f"Sent column to robot: {col}")
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                print(f"Robot client disconnected while sending column: {e}")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                # Queue to send on next reconnect
+                self.pending_column = int(col)
+                self.robot_client_socket = None
 
     def bitmasks_to_grid(self, player1_mask: int, player2_mask: int) -> list[list[int]]:
         """Convert bitmasks to 2D grid representation."""
@@ -289,9 +411,11 @@ class GameWrapper:
     def start_detection(self) -> bool:
         """Start the detection subprocess."""
         try:
+            # Always run detection.py from this file's directory to find calibration.json
+            det_cwd = str(Path(__file__).parent)
             self.detection_process = subprocess.Popen(
                 [sys.executable, "detection.py"],
-                cwd=".",
+                cwd=det_cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -316,14 +440,42 @@ class GameWrapper:
 
     def connect_to_detection(self) -> bool:
         """Connect to the detection socket server."""
-        try:
-            self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket_client.connect(("localhost", 65432))
-            print("Connected to detection socket server")
-            return True
-        except Exception as e:
-            print(f"Failed to connect to detection server: {e}")
-            return False
+        # Retry for a few seconds to allow the detector to initialize webcam & socket
+        deadline = time.time() + 10.0
+        last_err = None
+        while time.time() < deadline:
+            # If the detection process died, surface its stderr/stdout for debugging
+            if self.detection_process and self.detection_process.poll() is not None:
+                try:
+                    out, err = self.detection_process.communicate(timeout=1)
+                except Exception:
+                    out, err = b"", b""
+                if out:
+                    print("[detection stdout]\n" + out.decode(errors="ignore"))
+                if err:
+                    print("[detection stderr]\n" + err.decode(errors="ignore"))
+                print("Detection process terminated unexpectedly.")
+                return False
+
+            try:
+                self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket_client.settimeout(1.0)
+                self.socket_client.connect(("localhost", 65432))
+                self.socket_client.settimeout(None)
+                print("Connected to detection socket server")
+                return True
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+
+        print(f"Failed to connect to detection server: {last_err}")
+        print(
+            "Tip: Ensure detection dependencies are installed in the active venv:\n"
+            "  pip install -e /home/match-mover/Documents/connect-four-ai/robot-game\n"
+            "And try running detection directly for diagnostics:\n"
+            "  python /home/match-mover/Documents/connect-four-ai/robot-game/detection.py\n"
+        )
+        return False
 
     def disconnect_from_detection(self):
         """Disconnect from the detection socket server."""
@@ -633,6 +785,9 @@ class GameWrapper:
         # Show game GUI
         self.show_game_gui()
 
+        # Start robot server (PC acts as server; robot connects as client)
+        self.start_robot_server()
+
         # Initialize game state
         self.game_running = True
         last_p1, last_p2 = 0, 0
@@ -733,6 +888,8 @@ class GameWrapper:
                             )
 
                         self.update_ai_move_display(ai_move)
+                        # Send move to robot controller once per AI decision
+                        self.send_robot_column(ai_move)
 
                 # Update last state
                 last_p1, last_p2 = current_p1, current_p2
@@ -762,6 +919,7 @@ class GameWrapper:
         self.disconnect_from_detection()
         self.disconnect_from_robot()
         self.stop_detection()
+        self.stop_robot_server()
 
         if dpg.is_dearpygui_running():
             dpg.destroy_context()
