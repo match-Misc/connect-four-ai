@@ -208,6 +208,7 @@ class GameWrapper:
         self.board: Board = Board()
         self.detection_process: Optional[subprocess.Popen] = None
         self.socket_client: Optional[socket.socket] = None
+        self.robot_socket: Optional[socket.socket] = None
         self.last_bitmasks = (0, 0)
         self.game_running = False
         self.ai_move_displayed = False
@@ -215,6 +216,11 @@ class GameWrapper:
         self.human_turn = True
         self.game_won = False
         self.win_start_time = None
+
+        # Robot configuration
+        self.robot_ip = "localhost"
+        self.robot_port = 30002
+        self.load_robot_config()
 
         # GUI elements
         self.window_id = None
@@ -229,6 +235,17 @@ class GameWrapper:
         self.screen = pygame.display.set_mode((800, 800))
         pygame.display.set_caption("Connect Four - Human vs AI")
         self.clock = pygame.time.Clock()
+
+    def load_robot_config(self):
+        """Load robot configuration from robotconfig.json."""
+        try:
+            with open("robotconfig.json", "r") as f:
+                config = json.load(f)
+            self.robot_ip = config.get("robot_ip", "localhost")
+            self.robot_port = config.get("robot_port", 30002)
+            print(f"Loaded robot config: {self.robot_ip}:{self.robot_port}")
+        except Exception as e:
+            print(f"Could not load robotconfig.json, using defaults: {e}")
 
     def bitmasks_to_grid(self, player1_mask: int, player2_mask: int) -> list[list[int]]:
         """Convert bitmasks to 2D grid representation."""
@@ -313,6 +330,48 @@ class GameWrapper:
         if self.socket_client:
             self.socket_client.close()
             self.socket_client = None
+
+    def connect_to_robot(self) -> bool:
+        """Connect to the robot TCP server."""
+        try:
+            self.robot_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.robot_socket.connect((self.robot_ip, self.robot_port))
+            print(f"Connected to robot at {self.robot_ip}:{self.robot_port}")
+            return True
+        except Exception as e:
+            print(f"Failed to connect to robot: {e}")
+            return False
+
+    def disconnect_from_robot(self):
+        """Disconnect from the robot."""
+        if self.robot_socket:
+            self.robot_socket.close()
+            self.robot_socket = None
+
+    def send_robot_command(self, column: int) -> bool:
+        """Send column number to robot via TCP."""
+        if not self.robot_socket:
+            if not self.connect_to_robot():
+                return False
+
+        try:
+            # Send column as string
+            message = str(column)
+            self.robot_socket.sendall(message.encode("utf-8"))
+
+            # Wait for acknowledgment
+            response = self.robot_socket.recv(1024)
+            if response.decode("utf-8").strip() == "OK":
+                print(f"Robot acknowledged command for column {column}")
+                return True
+            else:
+                print(f"Robot returned error: {response.decode('utf-8')}")
+                return False
+        except Exception as e:
+            print(f"Error sending command to robot: {e}")
+            # Try to reconnect on next attempt
+            self.disconnect_from_robot()
+            return False
 
     def get_current_bitmasks(self) -> Tuple[int, int]:
         """Get current bitmasks from detection server."""
@@ -568,6 +627,9 @@ class GameWrapper:
             self.stop_detection()
             return
 
+        # Connect to robot (optional, will retry if needed)
+        self.connect_to_robot()
+
         # Show game GUI
         self.show_game_gui()
 
@@ -659,9 +721,17 @@ class GameWrapper:
                         self.ai_move_column = ai_move
                         self.board.ai_preview_column = ai_move
                         self.ai_move_displayed = True
-                        self.update_game_status(
-                            f"AI will play in column {ai_move + 1}. Make your move!"
-                        )
+
+                        # Send command to robot
+                        if self.send_robot_command(ai_move):
+                            self.update_game_status(
+                                f"AI will play in column {ai_move + 1}. Robot notified!"
+                            )
+                        else:
+                            self.update_game_status(
+                                f"AI will play in column {ai_move + 1}. Robot connection failed - make move manually!"
+                            )
+
                         self.update_ai_move_display(ai_move)
 
                 # Update last state
@@ -690,6 +760,7 @@ class GameWrapper:
     def cleanup(self):
         """Clean up resources."""
         self.disconnect_from_detection()
+        self.disconnect_from_robot()
         self.stop_detection()
 
         if dpg.is_dearpygui_running():
