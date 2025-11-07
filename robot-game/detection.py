@@ -36,7 +36,8 @@ import numpy as np
 
 class ConnectFourDetector:
     # Tunable parameters for detection
-    DETECTION_THRESHOLD = 65  # Color distance threshold for piece detection (lower: stricter detection, reduces false positives but increases false negatives; higher: more lenient, increases false positives but reduces false negatives; rough range: 50-100)
+    DETECTION_THRESHOLD = 30  # Color distance threshold for piece detection in HSV space (lower: stricter detection, reduces false positives but increases false negatives; higher: more lenient, increases false positives but reduces false negatives; rough range: 20-60 for HSV)
+    DETECTION_VALUE_THRESHOLD = 50  # Minimum V (value) in HSV to consider pixel for averaging (filters out dark/black pixels)
     CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
 
     def __init__(self, calibration_file="calibration.json"):
@@ -95,6 +96,13 @@ class ConnectFourDetector:
             self.v_spacing = self.calibration_data["vertical_spacing"]
             self.player1_color = np.array(self.calibration_data["player1_color"])
             self.player2_color = np.array(self.calibration_data["player2_color"])
+            # Convert calibrated colors to HSV for better color matching
+            self.player1_color_hsv = cv2.cvtColor(
+                np.uint8([[self.player1_color]]), cv2.COLOR_BGR2HSV
+            )[0][0]
+            self.player2_color_hsv = cv2.cvtColor(
+                np.uint8([[self.player2_color]]), cv2.COLOR_BGR2HSV
+            )[0][0]
             self.contrast = self.calibration_data.get("contrast", 100)
             self.saturation = self.calibration_data.get("saturation", 100)
             self.brightness = self.calibration_data.get("brightness", 0)
@@ -283,12 +291,25 @@ class ConnectFourDetector:
                     ]
 
                     if roi.size > 0:
-                        avg_color = cv2.mean(roi)[:3]  # BGR values
-                        avg_color = np.array(avg_color)
+                        # Convert ROI to HSV for better color analysis
+                        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-                        # Calculate color distances
-                        dist_p1 = np.linalg.norm(avg_color - self.player1_color)
-                        dist_p2 = np.linalg.norm(avg_color - self.player2_color)
+                        # Filter out dark pixels (low value) to avoid black lines affecting average
+                        mask = (
+                            roi_hsv[:, :, 2] > self.DETECTION_VALUE_THRESHOLD
+                        )  # V channel > threshold
+                        if np.any(mask):
+                            # Compute average only from non-dark pixels
+                            avg_hsv = cv2.mean(roi_hsv, mask=mask.astype(np.uint8))[:3]
+                            avg_hsv = np.array(avg_hsv)
+                        else:
+                            # If all pixels are dark, use original average (fallback)
+                            avg_hsv = cv2.mean(roi_hsv)[:3]
+                            avg_hsv = np.array(avg_hsv)
+
+                        # Calculate color distances in HSV space
+                        dist_p1 = np.linalg.norm(avg_hsv - self.player1_color_hsv)
+                        dist_p2 = np.linalg.norm(avg_hsv - self.player2_color_hsv)
 
                         # Classify piece
                         # Use a threshold to determine if it's a piece or empty
