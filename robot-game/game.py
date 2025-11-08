@@ -15,13 +15,15 @@ import os
 import socket
 import subprocess
 import sys
-import time
 import threading
-from typing import Optional, Tuple
+import time
 from pathlib import Path
+from typing import Optional, Tuple
 
 import dearpygui.dearpygui as dpg
 import pygame
+import requests
+
 try:
     from connect_four_ai import AIPlayer, Difficulty, Position
 except Exception as e:
@@ -37,10 +39,12 @@ except Exception as e:
         "  maturin develop --release\n\n"
         "Or try installing from PyPI (if a prebuilt wheel exists for your Python):\n"
         "  python -m pip install connect_four_ai\n\n"
-        "Original import error:" , e,
+        "Original import error:",
+        e,
     )
     # Exit now since the rest of the module requires these symbols.
     raise
+from nfc_scanner import scan_nfc_tag
 from pygame import Surface
 
 
@@ -249,6 +253,14 @@ class GameWrapper:
         self.robot_conn_lock = threading.Lock()
         self.pending_column = None
 
+        # NFC and API integration
+        self.nfc_id: Optional[str] = None
+        self.player_name: Optional[str] = None
+        self.server_url: str = os.environ.get(
+            "GAME_SERVER_URL", "http://127.0.0.1:5000"
+        )
+        self.total_moves: int = 0
+
         # GUI elements
         self.window_id = None
         self.difficulty_window_id = None
@@ -256,6 +268,7 @@ class GameWrapper:
         self.status_text_id = None
         self.ai_move_text_id = None
         self.hint_button_id = None
+        self.player_name_text_id = None
 
         # Pygame setup
         pygame.init()
@@ -272,8 +285,12 @@ class GameWrapper:
             return True
         try:
             self.robot_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.robot_server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.robot_server_socket.bind((self.robot_server_host, self.robot_server_port))
+            self.robot_server_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+            self.robot_server_socket.bind(
+                (self.robot_server_host, self.robot_server_port)
+            )
             self.robot_server_socket.listen(1)
             self.robot_server_running = True
 
@@ -318,7 +335,9 @@ class GameWrapper:
 
             self.robot_server_thread = threading.Thread(target=accept_loop, daemon=True)
             self.robot_server_thread.start()
-            print(f"Robot server listening on {self.robot_server_host}:{self.robot_server_port}")
+            print(
+                f"Robot server listening on {self.robot_server_host}:{self.robot_server_port}"
+            )
             return True
         except Exception as e:
             print(f"Failed to start robot server: {e}")
@@ -381,6 +400,86 @@ class GameWrapper:
                 self.pending_column = col_to_send
                 self.robot_client_socket = None
 
+    def scan_nfc_and_register(self):
+        """Scan NFC tag and register with server to get player name."""
+        print("Please scan your NFC tag...")
+
+        # Scan NFC tag
+        self.nfc_id = scan_nfc_tag(port="COM11", timeout=30)
+        if not self.nfc_id:
+            print("NFC scan failed or timed out")
+            self.player_name = "Unbenannt"
+            return False
+
+        # Send to server
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/nfc_scan",
+                json={"nfc_id": self.nfc_id},
+                timeout=10,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "success":
+                    self.player_name = data.get("player_name", "Unbenannt")
+                    print(f"Player registered: {self.player_name}")
+                    return True
+                else:
+                    print(f"Server error: {data}")
+                    self.player_name = "Unbenannt"
+                    return False
+            else:
+                print(f"HTTP error: {response.status_code}")
+                self.player_name = "Unbenannt"
+                return False
+
+        except requests.RequestException as e:
+            print(f"Network error: {e}")
+            self.player_name = "Unbenannt"
+            return False
+
+    def get_difficulty_string(self) -> str:
+        """Convert Difficulty enum to API string."""
+        if self.difficulty == Difficulty.EASY:
+            return "Leicht"
+        elif self.difficulty == Difficulty.MEDIUM:
+            return "Mittel"
+        elif self.difficulty == Difficulty.HARD:
+            return "Schwer"
+        elif self.difficulty == Difficulty.IMPOSSIBLE:
+            return "Schwer"  # Map impossible to schwer
+        else:
+            return "Mittel"  # Default
+
+    def send_game_result(self):
+        """Send game result to server if player exists."""
+        if not self.nfc_id or not self.player_name or self.player_name == "Unbenannt":
+            print("No registered player, skipping result submission")
+            return
+
+        try:
+            payload = {
+                "nfc_id": self.nfc_id,
+                "moves": self.total_moves,
+                "difficulty": self.get_difficulty_string(),
+            }
+
+            response = requests.post(
+                f"{self.server_url}/api/vier_gewinnt", json=payload, timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "success":
+                    print(f"Game result sent successfully for {self.player_name}")
+                else:
+                    print(f"Server error sending result: {data}")
+            else:
+                print(f"HTTP error sending result: {response.status_code}")
+
+        except requests.RequestException as e:
+            print(f"Network error sending result: {e}")
 
     def bitmasks_to_grid(self, player1_mask: int, player2_mask: int) -> list[list[int]]:
         """Convert bitmasks to 2D grid representation."""
@@ -598,19 +697,81 @@ class GameWrapper:
 
         return winning_positions
 
+    def show_nfc_scan_menu(self):
+        """Show NFC scan menu before difficulty selection."""
+        dpg.create_context()
+        dpg.create_viewport(title="Connect Four - NFC Scan", width=400, height=250)
+
+        with dpg.window(
+            label="NFC Scan", width=400, height=250
+        ) as self.difficulty_window_id:
+            dpg.add_text("Please scan your NFC tag to start:", pos=(20, 20))
+            self.player_name_text_id = dpg.add_text("Player: Scanning...", pos=(20, 60))
+
+            with dpg.group(pos=(20, 100)):
+                dpg.add_button(
+                    label="Scan NFC Tag",
+                    width=360,
+                    height=40,
+                    callback=self.perform_nfc_scan,
+                )
+                dpg.add_button(
+                    label="Continue as Guest",
+                    width=360,
+                    height=40,
+                    callback=self.skip_nfc_scan,
+                )
+
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+
+        # Wait for NFC scan or skip
+        while dpg.is_dearpygui_running() and self.player_name is None:
+            dpg.render_dearpygui_frame()
+            time.sleep(0.01)
+
+        dpg.destroy_context()
+
+    def perform_nfc_scan(self):
+        """Perform NFC scan and update display."""
+        if dpg.does_item_exist(self.player_name_text_id):
+            dpg.set_value(self.player_name_text_id, "Player: Scanning... (30s timeout)")
+
+        # Perform scan in thread to avoid blocking GUI
+        def scan_thread():
+            success = self.scan_nfc_and_register()
+            if success:
+                display_name = f"Player: {self.player_name}"
+            else:
+                display_name = f"Player: {self.player_name} (scan failed)"
+
+            if dpg.does_item_exist(self.player_name_text_id):
+                dpg.set_value(self.player_name_text_id, display_name)
+
+        threading.Thread(target=scan_thread, daemon=True).start()
+
+    def skip_nfc_scan(self):
+        """Skip NFC scan and continue as guest."""
+        self.player_name = "Gast"
+        self.nfc_id = None
+
     def show_difficulty_menu(self):
         """Show the difficulty selection menu using Dear PyGui."""
         dpg.create_context()
         dpg.create_viewport(
-            title="Connect Four - Select Difficulty", width=400, height=300
+            title="Connect Four - Select Difficulty", width=400, height=350
         )
 
         with dpg.window(
-            label="Select Difficulty", width=400, height=300
+            label="Select Difficulty", width=400, height=350
         ) as self.difficulty_window_id:
-            dpg.add_text("Choose AI Difficulty:", pos=(20, 20))
+            player_display = (
+                f"Player: {self.player_name}" if self.player_name else "Player: Unknown"
+            )
+            dpg.add_text(player_display, pos=(20, 20))
+            dpg.add_text("Choose AI Difficulty:", pos=(20, 50))
 
-            with dpg.group(pos=(20, 50)):
+            with dpg.group(pos=(20, 80)):
                 dpg.add_button(
                     label="Easy",
                     width=360,
@@ -732,6 +893,9 @@ class GameWrapper:
 
     def run_game(self):
         """Main game loop."""
+        # Show NFC scan menu first
+        self.show_nfc_scan_menu()
+
         # Show difficulty selection
         self.show_difficulty_menu()
 
@@ -758,10 +922,12 @@ class GameWrapper:
 
         # Initialize game state
         self.game_running = True
+        self.total_moves = 0
         last_p1, last_p2 = 0, 0
         human_turn = True  # Human goes first
 
-        self.update_game_status("Game started! Human's turn (you go first)")
+        player_display = self.player_name if self.player_name else "Unknown Player"
+        self.update_game_status(f"Game started! {player_display}'s turn (you go first)")
 
         try:
             while self.game_running:
@@ -798,6 +964,8 @@ class GameWrapper:
 
                 # Check if win highlight period is over (10 seconds)
                 if self.game_won and time.time() - self.win_start_time >= 10:
+                    # Send game result to server before ending
+                    self.send_game_result()
                     self.game_running = False
                     break
 
@@ -818,6 +986,7 @@ class GameWrapper:
                         last_p1, last_p2, current_p1, current_p2
                     )
                     if changed:
+                        self.total_moves += 1  # Increment move counter
                         if human_turn:
                             # Human made a move, now it's AI's turn
                             human_turn = False
@@ -830,7 +999,10 @@ class GameWrapper:
                             # AI move was made, now human's turn
                             human_turn = True
                             self.ai_move_displayed = False
-                            self.update_game_status("Your turn!")
+                            player_display = (
+                                self.player_name if self.player_name else "Your"
+                            )
+                            self.update_game_status(f"{player_display} turn!")
                             # Reset preview when AI moves
                             self.board.ai_preview_column = -1
                             # Update hint scores after AI move
