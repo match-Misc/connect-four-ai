@@ -411,22 +411,31 @@ class GameWrapper:
             self.player_name = "Unbenannt"
             return False
 
-        # Send to server
+        # Query server for player name
         try:
+            payload = {"nfc_id": self.nfc_id}
             response = requests.post(
                 f"{self.server_url}/api/nfc_scan",
-                json={"nfc_id": self.nfc_id},
+                data=payload,  # Use data instead of json for form encoding
                 timeout=10,
             )
 
             if response.status_code == 200:
                 data = response.json()
-                if data.get("status") == "success":
-                    self.player_name = data.get("player_name", "Unbenannt")
-                    print(f"Player registered: {self.player_name}")
-                    return True
+                if data.get("exists", False):
+                    player_name = data.get("player_name", "Unbenannt")
+                    has_name = data.get("has_name", False)
+
+                    if has_name and player_name != "Unbenannt":
+                        self.player_name = player_name
+                        print(f"✅ Player found: {self.player_name}")
+                        return True
+                    else:
+                        print(f"⚠️  NFC ID exists but no name assigned: {self.nfc_id}")
+                        self.player_name = "Unbenannt"
+                        return False
                 else:
-                    print(f"Server error: {data}")
+                    print(f"❌ NFC ID not found in system: {self.nfc_id}")
                     self.player_name = "Unbenannt"
                     return False
             else:
