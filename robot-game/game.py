@@ -257,7 +257,7 @@ class GameWrapper:
         self.nfc_id: Optional[str] = None
         self.player_name: Optional[str] = None
         self.server_url: str = os.environ.get(
-            "GAME_SERVER_URL", "http://127.0.0.1:5000"
+            "GAME_SERVER_URL", "http://10.145.8.50:5000"
         )
         self.total_moves: int = 0
 

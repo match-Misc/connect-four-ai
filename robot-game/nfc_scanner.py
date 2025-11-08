@@ -18,7 +18,7 @@ import serial
 
 class NFCScanner:
     def __init__(self, port=None, baudrate=9600, timeout=1):
-        self.port = port or self._get_default_port()
+        self.port = self._get_default_port()
         self.baudrate = baudrate
         self.timeout = timeout
         self.serial_conn = None
