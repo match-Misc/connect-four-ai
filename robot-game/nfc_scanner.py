@@ -8,6 +8,8 @@ It parses the NFC_ID from the serial output and returns it for API integration.
 Expected serial output format from ESP: "NFC_ID:XXXXXXXX"
 """
 
+import os
+import platform
 import re
 import time
 
@@ -15,11 +17,32 @@ import serial
 
 
 class NFCScanner:
-    def __init__(self, port="COM11", baudrate=9600, timeout=1):
-        self.port = port
+    def __init__(self, port=None, baudrate=9600, timeout=1):
+        self.port = port or self._get_default_port()
         self.baudrate = baudrate
         self.timeout = timeout
         self.serial_conn = None
+
+    def _get_default_port(self):
+        """Get default serial port based on OS."""
+        system = platform.system().lower()
+        if system == "windows":
+            return "COM11"
+        elif system == "linux":
+            # Try common Linux USB serial ports
+            common_ports = [
+                "/dev/ttyUSB0",
+                "/dev/ttyUSB1",
+                "/dev/ttyACM0",
+                "/dev/ttyACM1",
+            ]
+            for port in common_ports:
+                if os.path.exists(port):
+                    return port
+            return "/dev/ttyUSB0"  # Default fallback
+        else:
+            # macOS or other
+            return "/dev/tty.usbserial-0001"  # Common macOS pattern
 
     def connect(self):
         """Connect to the ESP32 serial port."""

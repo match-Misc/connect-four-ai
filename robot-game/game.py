@@ -404,8 +404,8 @@ class GameWrapper:
         """Scan NFC tag and register with server to get player name."""
         print("Please scan your NFC tag...")
 
-        # Scan NFC tag
-        self.nfc_id = scan_nfc_tag(port="COM11", timeout=30)
+        # Scan NFC tag (will auto-detect port based on OS)
+        self.nfc_id = scan_nfc_tag(timeout=30)
         if not self.nfc_id:
             print("NFC scan failed or timed out")
             self.player_name = "Unbenannt"
@@ -698,7 +698,7 @@ class GameWrapper:
         return winning_positions
 
     def show_nfc_scan_menu(self):
-        """Show NFC scan menu before difficulty selection."""
+        """Show NFC scan menu before difficulty selection - automatically scans."""
         dpg.create_context()
         dpg.create_viewport(title="Connect Four - NFC Scan", width=400, height=250)
 
@@ -710,12 +710,6 @@ class GameWrapper:
 
             with dpg.group(pos=(20, 100)):
                 dpg.add_button(
-                    label="Scan NFC Tag",
-                    width=360,
-                    height=40,
-                    callback=self.perform_nfc_scan,
-                )
-                dpg.add_button(
                     label="Continue as Guest",
                     width=360,
                     height=40,
@@ -724,6 +718,9 @@ class GameWrapper:
 
         dpg.setup_dearpygui()
         dpg.show_viewport()
+
+        # Start automatic NFC scanning
+        self.perform_nfc_scan()
 
         # Wait for NFC scan or skip
         while dpg.is_dearpygui_running() and self.player_name is None:
