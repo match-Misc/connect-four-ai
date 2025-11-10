@@ -5,7 +5,7 @@ NFC Scanner Script for Connect Four Game
 This script connects to an ESP32/D1 Mini via serial (COM11) and reads NFC tag IDs.
 It parses the NFC_ID from the serial output and returns it for API integration.
 
-Expected serial output format from ESP: "NFC_ID:XXXXXXXX"
+Expected serial output format from ESP: "XXXXXXXX" (hex string)
 """
 
 import os
@@ -77,7 +77,7 @@ class NFCScanner:
             return None
 
         start_time = time.time()
-        nfc_pattern = re.compile(r"NFC_ID:([A-Fa-f0-9]+)")
+        nfc_pattern = re.compile(r"^([A-Fa-f0-9]+)$")
 
         print("Waiting for NFC tag scan...")
 
