@@ -3,8 +3,8 @@
 Connect Four Board Detection Script
 
 This script performs computer vision detection of the current state
-of a Connect Four board using a webcam and calibration data. It outputs
-two bitboards representing the positions of Player 1 and Player 2 pieces.
+of a Connect Four board using an Intel RealSense color stream and calibration data.
+It outputs two bitboards representing the positions of Player 1 and Player 2 pieces.
 
 Usage: python detection.py [--calibration CALIB_FILE]
 
@@ -24,11 +24,12 @@ Each bit position corresponds to a hole on the board, with bit 0 at bottom-left.
 
 import argparse
 import json
-import socket
+import socket   
 import sys
 import threading
 import time
 
+import pyrealsense2 as rs
 import cv2
 import dearpygui.dearpygui as dpg
 import numpy as np
@@ -36,7 +37,7 @@ import numpy as np
 
 class ConnectFourDetector:
     # Tunable parameters for detection
-    DETECTION_THRESHOLD = 30  # Color distance threshold for piece detection in HSV space (lower: stricter detection, reduces false positives but increases false negatives; higher: more lenient, increases false positives but reduces false negatives; rough range: 20-60 for HSV)
+    DETECTION_THRESHOLD = 50  # Color distance threshold for piece detection in HSV space (lower: stricter detection, reduces false positives but increases false negatives; higher: more lenient, increases false positives but reduces false negatives; rough range: 20-60 for HSV)
     DETECTION_VALUE_THRESHOLD = 50  # Minimum V (value) in HSV to consider pixel for averaging (filters out dark/black pixels)
     CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
 
@@ -53,8 +54,10 @@ class ConnectFourDetector:
         self.saturation = None
         self.brightness = None
 
-        # Webcam and threading
-        self.cap = None
+        # RealSense and threading
+        self.pipeline = None
+        self.config = None
+        self.cap = None  # retained for compatibility, unused
         self.current_frame = None
         self.running = True
         self.frame_lock = threading.Lock()
@@ -76,6 +79,12 @@ class ConnectFourDetector:
         # Robustness improvements
         self.consistency_window = self.CONSISTENCY_WINDOW
         self.detection_history = []  # list of (timestamp, player1_mask, player2_mask)
+
+        # Dynamic detection threshold & debugging distances
+        self.detection_threshold = self.DETECTION_THRESHOLD
+        self.last_min_dists = [[0.0 for _ in range(7)] for _ in range(6)]  # row-major top (0) to bottom (5)
+        self.last_dist_p1 = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_dist_p2 = [[0.0 for _ in range(7)] for _ in range(6)]
 
     def load_calibration(self):
         """Load calibration data from JSON file"""
@@ -119,35 +128,45 @@ class ConnectFourDetector:
             return False
 
     def start_webcam(self):
-        """Start webcam capture in a separate thread"""
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            print("Error: Could not open webcam")
+        """Start RealSense color stream capture in a separate thread (name kept for compatibility)."""
+        try:
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            self.pipeline.start(self.config)
+        except Exception as e:
+            print(f"Error: Could not start RealSense pipeline ({e})")
             return False
 
         def capture_loop():
-            frame_count = 0
             while self.running:
-                ret, frame = self.cap.read()
-                if ret:
-                    frame_count += 1
+                try:
+                    frames = self.pipeline.wait_for_frames()
+                    color_frame = frames.get_color_frame()
+                    if not color_frame:
+                        continue
+                    frame = np.asanyarray(color_frame.get_data())
                     with self.frame_lock:
                         self.current_frame = frame.copy()
-                else:
-                    print("Failed to read frame")
-                time.sleep(0.033)  # ~30 FPS
+                except Exception as e:
+                    # Print once per failure type can be added if too noisy
+                    pass
+                time.sleep(0.001)
 
         self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
         self.capture_thread.start()
         return True
 
     def stop_webcam(self):
-        """Stop webcam capture"""
+        """Stop RealSense capture"""
         self.running = False
-        if self.capture_thread.is_alive():
+        if hasattr(self, "capture_thread") and self.capture_thread.is_alive():
             self.capture_thread.join()
-        if self.cap:
-            self.cap.release()
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
 
     def start_socket_server(self):
         """Start socket server to expose bitmasks"""
@@ -262,6 +281,10 @@ class ConnectFourDetector:
 
         player1_mask = 0
         player2_mask = 0
+        # Reset debug distances
+        self.last_min_dists = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_dist_p1 = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_dist_p2 = [[0.0 for _ in range(7)] for _ in range(6)]
 
         # Sample each hole position
         for row in range(6):  # 6 rows
@@ -314,7 +337,11 @@ class ConnectFourDetector:
                         # Classify piece
                         # Use a threshold to determine if it's a piece or empty
                         min_dist = min(dist_p1, dist_p2)
-                        threshold = self.DETECTION_THRESHOLD
+                        threshold = self.detection_threshold
+                        # Store min distance for debugging overlay
+                        self.last_min_dists[row][col] = float(min_dist)
+                        self.last_dist_p1[row][col] = float(dist_p1)
+                        self.last_dist_p2[row][col] = float(dist_p2)
 
                         if min_dist < threshold:
                             # Calculate bit position
@@ -475,6 +502,32 @@ class ConnectFourDetector:
                                 frame, (x, y), self.hole_diameter // 2, (0, 255, 0), 1
                             )  # Green outline for empty
 
+                        # Debug: show dist_p1, dist_p2 above and min_dist below each hole
+                        if 0 <= row < 6 and 0 <= col < 7:
+                            d1 = self.last_dist_p1[row][col]
+                            d2 = self.last_dist_p2[row][col]
+                            dm = self.last_min_dists[row][col]
+                            txt_top = f"P1:{d1:.1f} P2:{d2:.1f}"
+                            txt_bot = f"M:{dm:.1f}"
+                            cv2.putText(
+                                frame,
+                                txt_top,
+                                (x - self.hole_diameter // 2, y - self.hole_diameter // 2 - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.35,
+                                (255, 255, 255),
+                                1,
+                            )
+                            cv2.putText(
+                                frame,
+                                txt_bot,
+                                (x - 15, y + self.hole_diameter // 2 + 15),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.4,
+                                (200, 200, 200),
+                                1,
+                            )
+
         # Convert to RGB for Dear PyGui and normalize to 0-1 range
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
@@ -502,7 +555,7 @@ class ConnectFourDetector:
             with dpg.group(horizontal=True):
                 # Left side - Image display
                 with dpg.child_window(width=700, height=600):
-                    dpg.add_text("Webcam Feed - Real-time Detection")
+                    dpg.add_text("RealSense Feed - Real-time Detection")
                     with dpg.texture_registry():
                         self.texture_id = dpg.add_raw_texture(
                             640,
@@ -519,6 +572,15 @@ class ConnectFourDetector:
                         "Player 1: 0000000000000000000000000000000000000000000000000\n"
                         "Player 2: 0000000000000000000000000000000000000000000000000",
                         wrap=270,
+                    )
+                    dpg.add_separator()
+                    dpg.add_text("Detection Threshold")
+                    dpg.add_slider_float(
+                        label="Threshold",
+                        default_value=self.detection_threshold,
+                        min_value=5.0,
+                        max_value=100.0,
+                        callback=lambda s, a: setattr(self, "detection_threshold", a),
                     )
 
         dpg.setup_dearpygui()

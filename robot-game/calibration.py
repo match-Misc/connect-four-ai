@@ -3,13 +3,17 @@
 Connect Four Board Calibration Script
 
 This script performs computer vision calibration for detecting the current state
-of a Connect Four board using a webcam. It allows users to:
+of a Connect Four board using an Intel RealSense camera (color stream). It allows users to:
 1. Define the board area using a rectangle (4 corners)
 2. Align holes using sliders for diameter, horizontal and vertical spacing
 3. Calibrate colors for both players by sampling from the first two columns
 4. Export calibration data to JSON for use in detection scripts
 
 Usage: python calibration.py
+
+Notes:
+- Requires `pyrealsense2` to be installed and a connected RealSense device.
+- The previous webcam implementation has been replaced by a RealSense pipeline.
 """
 
 import json
@@ -17,6 +21,8 @@ import os
 import sys
 import threading
 import time
+
+import pyrealsense2 as rs
 
 import cv2
 import dearpygui.dearpygui as dpg
@@ -38,8 +44,10 @@ class ConnectFourCalibrator:
         self.saturation = 100  # 0-200, 100=1.0
         self.brightness = 0  # -100 to 100
 
-        # Webcam and threading
-        self.cap = None
+        # RealSense pipeline and threading
+        self.pipeline = None
+        self.config = None
+        self.cap = None  # preserved for backward compatibility (unused now)
         self.current_frame = None
         self.running = True
         self.frame_lock = threading.Lock()
@@ -52,31 +60,46 @@ class ConnectFourCalibrator:
         self.player2_legend_id = None
 
     def start_webcam(self):
-        """Start webcam capture in a separate thread"""
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            self.status_text = "Error: Could not open webcam"
+        """Start RealSense color stream capture in a separate thread (name kept for compatibility)."""
+        try:
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            # Configure color stream (adjust resolution / fps if needed)
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            self.pipeline.start(self.config)
+        except Exception as e:
+            self.status_text = f"Error: Could not start RealSense pipeline ({e})"
             return False
 
         def capture_loop():
             while self.running:
-                ret, frame = self.cap.read()
-                if ret:
+                try:
+                    frames = self.pipeline.wait_for_frames()
+                    color_frame = frames.get_color_frame()
+                    if not color_frame:
+                        continue
+                    frame = np.asanyarray(color_frame.get_data())
                     with self.frame_lock:
                         self.current_frame = frame.copy()
-                time.sleep(0.033)  # ~30 FPS
+                except Exception as e:
+                    self.status_text = f"RealSense error: {e}"
+                # Small sleep to avoid busy loop; RealSense already limits FPS
+                time.sleep(0.001)
 
         self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
         self.capture_thread.start()
         return True
 
     def stop_webcam(self):
-        """Stop webcam capture"""
+        """Stop RealSense capture"""
         self.running = False
-        if self.capture_thread.is_alive():
+        if hasattr(self, "capture_thread") and self.capture_thread.is_alive():
             self.capture_thread.join()
-        if self.cap:
-            self.cap.release()
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
 
     def mouse_callback(self, sender, app_data, user_data):
         """Handle mouse clicks for defining board corners"""
@@ -406,7 +429,7 @@ class ConnectFourCalibrator:
             with dpg.group(horizontal=True):
                 # Left side - Image display
                 with dpg.child_window(width=800, height=600):
-                    dpg.add_text("Webcam Feed - Click to define corners")
+                    dpg.add_text("RealSense Feed - Click to define corners")
                     with dpg.texture_registry():
                         # Create a placeholder texture (will be updated with actual frame)
                         self.texture_id = dpg.add_raw_texture(
