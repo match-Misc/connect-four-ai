@@ -37,9 +37,9 @@ import numpy as np
 
 class ConnectFourDetector:
     # Tunable parameters for detection
-    DETECTION_THRESHOLD = 50  # Color distance threshold for piece detection in HSV space (lower: stricter detection, reduces false positives but increases false negatives; higher: more lenient, increases false positives but reduces false negatives; rough range: 20-60 for HSV)
-    DETECTION_VALUE_THRESHOLD = 50  # Minimum V (value) in HSV to consider pixel for averaging (filters out dark/black pixels)
+    DETECTION_THRESHOLD = 80  # Threshold on G channel in RGB (0-255). Below: black, above: green.
     CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
+    DEPTH_TOLERANCE_M = 0.01  # +/- 1 cm tolerance for depth verification
 
     def __init__(self, calibration_file="calibration.json"):
         self.calibration_file = calibration_file
@@ -57,8 +57,11 @@ class ConnectFourDetector:
         # RealSense and threading
         self.pipeline = None
         self.config = None
+        self.align = None
+        self.depth_scale = None
         self.cap = None  # retained for compatibility, unused
         self.current_frame = None
+        self.current_depth_m = None  # aligned to color, meters
         self.running = True
         self.frame_lock = threading.Lock()
 
@@ -80,11 +83,11 @@ class ConnectFourDetector:
         self.consistency_window = self.CONSISTENCY_WINDOW
         self.detection_history = []  # list of (timestamp, player1_mask, player2_mask)
 
-        # Dynamic detection threshold & debugging distances
+        # Dynamic detection threshold & last sampled G values for overlay/prints
         self.detection_threshold = self.DETECTION_THRESHOLD
-        self.last_min_dists = [[0.0 for _ in range(7)] for _ in range(6)]  # row-major top (0) to bottom (5)
-        self.last_dist_p1 = [[0.0 for _ in range(7)] for _ in range(6)]
-        self.last_dist_p2 = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]  # row-major top (0) to bottom (5)
+        self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
+        self.calib_depth_m = None  # 6x7 matrix from calibration
 
     def load_calibration(self):
         """Load calibration data from JSON file"""
@@ -103,18 +106,16 @@ class ConnectFourDetector:
             self.hole_diameter = self.calibration_data["hole_diameter"]
             self.h_spacing = self.calibration_data["horizontal_spacing"]
             self.v_spacing = self.calibration_data["vertical_spacing"]
-            self.player1_color = np.array(self.calibration_data["player1_color"])
-            self.player2_color = np.array(self.calibration_data["player2_color"])
-            # Convert calibrated colors to HSV for better color matching
-            self.player1_color_hsv = cv2.cvtColor(
-                np.uint8([[self.player1_color]]), cv2.COLOR_BGR2HSV
-            )[0][0]
-            self.player2_color_hsv = cv2.cvtColor(
-                np.uint8([[self.player2_color]]), cv2.COLOR_BGR2HSV
-            )[0][0]
+            self.player1_color = np.array(self.calibration_data["player1_color"]) if "player1_color" in self.calibration_data else None
+            self.player2_color = np.array(self.calibration_data["player2_color"]) if "player2_color" in self.calibration_data else None
             self.contrast = self.calibration_data.get("contrast", 100)
             self.saturation = self.calibration_data.get("saturation", 100)
             self.brightness = self.calibration_data.get("brightness", 0)
+            # Load calibration depth map if present
+            if "depth_m" in self.calibration_data:
+                self.calib_depth_m = self.calibration_data["depth_m"]
+
+            self.detection_threshold = (self.player1_color[1]+self.player2_color[1])/2
 
             return True
         except FileNotFoundError:
@@ -132,8 +133,15 @@ class ConnectFourDetector:
         try:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
+            # Enable depth+color, align depth to color for per-pixel depth
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
             self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            self.pipeline.start(self.config)
+            profile = self.pipeline.start(self.config)
+            # Depth scale
+            depth_sensor = profile.get_device().first_depth_sensor()
+            self.depth_scale = float(depth_sensor.get_depth_scale())
+            # Align depth to color
+            self.align = rs.align(rs.stream.color)
         except Exception as e:
             print(f"Error: Could not start RealSense pipeline ({e})")
             return False
@@ -142,14 +150,23 @@ class ConnectFourDetector:
             while self.running:
                 try:
                     frames = self.pipeline.wait_for_frames()
+                    if self.align is not None:
+                        frames = self.align.process(frames)
                     color_frame = frames.get_color_frame()
-                    if not color_frame:
+                    depth_frame = frames.get_depth_frame()
+                    if not color_frame or not depth_frame:
                         continue
                     frame = np.asanyarray(color_frame.get_data())
+                    depth_raw = np.asanyarray(depth_frame.get_data())  # uint16
+                    depth_m = (
+                        depth_raw.astype(np.float32) * self.depth_scale
+                        if self.depth_scale is not None
+                        else depth_raw.astype(np.float32)
+                    )
                     with self.frame_lock:
                         self.current_frame = frame.copy()
-                except Exception as e:
-                    # Print once per failure type can be added if too noisy
+                        self.current_depth_m = depth_m
+                except Exception:
                     pass
                 time.sleep(0.001)
 
@@ -279,12 +296,11 @@ class ConnectFourDetector:
         src_points = corners.astype(np.float32)
         M = cv2.getPerspectiveTransform(src_points, dst_points)
 
-        player1_mask = 0
-        player2_mask = 0
-        # Reset debug distances
-        self.last_min_dists = [[0.0 for _ in range(7)] for _ in range(6)]
-        self.last_dist_p1 = [[0.0 for _ in range(7)] for _ in range(6)]
-        self.last_dist_p2 = [[0.0 for _ in range(7)] for _ in range(6)]
+        player1_mask = 0  # will represent GREEN
+        player2_mask = 0  # will represent BLACK
+        # Reset last values
+        self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
 
         # Sample each hole position
         for row in range(6):  # 6 rows
@@ -314,45 +330,46 @@ class ConnectFourDetector:
                     ]
 
                     if roi.size > 0:
-                        # Convert ROI to HSV for better color analysis
-                        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                        # Compute average G value from ROI (frame is BGR)
+                        avg_bgr = cv2.mean(roi)[:3]
+                        avg_g = float(avg_bgr[1])
+                        self.last_g_values[row][col] = avg_g
 
-                        # Filter out dark pixels (low value) to avoid black lines affecting average
-                        mask = (
-                            roi_hsv[:, :, 2] > self.DETECTION_VALUE_THRESHOLD
-                        )  # V channel > threshold
-                        if np.any(mask):
-                            # Compute average only from non-dark pixels
-                            avg_hsv = cv2.mean(roi_hsv, mask=mask.astype(np.uint8))[:3]
-                            avg_hsv = np.array(avg_hsv)
-                        else:
-                            # If all pixels are dark, use original average (fallback)
-                            avg_hsv = cv2.mean(roi_hsv)[:3]
-                            avg_hsv = np.array(avg_hsv)
+                        # Depth gating: require measured depth within +/- tolerance of calibration depth
+                        depth_ok = False
+                        measured_depth = None
+                        if self.current_depth_m is not None:
+                            # sample median depth in small ROI around (x,y)
+                            h, w = self.current_depth_m.shape[:2]
+                            radius = max(1, self.hole_diameter // 6)
+                            y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+                            x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+                            d_roi = self.current_depth_m[y0:y1, x0:x1]
+                            valid = d_roi[d_roi > 0]
+                            if valid.size > 0:
+                                measured_depth = float(np.median(valid))
+                        self.last_depth_values[row][col] = measured_depth
 
-                        # Calculate color distances in HSV space
-                        dist_p1 = np.linalg.norm(avg_hsv - self.player1_color_hsv)
-                        dist_p2 = np.linalg.norm(avg_hsv - self.player2_color_hsv)
+                        if (
+                            measured_depth is not None
+                            and self.calib_depth_m is not None
+                            and 0 <= row < 6
+                            and 0 <= col < 7
+                        ):
+                            calib_d = self.calib_depth_m[row][col]
+                            if calib_d is not None:
+                                if abs(measured_depth - float(calib_d)) <= self.DEPTH_TOLERANCE_M:
+                                    depth_ok = True
+                        # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
 
-                        # Classify piece
-                        # Use a threshold to determine if it's a piece or empty
-                        min_dist = min(dist_p1, dist_p2)
-                        threshold = self.detection_threshold
-                        # Store min distance for debugging overlay
-                        self.last_min_dists[row][col] = float(min_dist)
-                        self.last_dist_p1[row][col] = float(dist_p1)
-                        self.last_dist_p2[row][col] = float(dist_p2)
-
-                        if min_dist < threshold:
-                            # Calculate bit position
-                            # Bitboard layout: bottom-left is bit 0, increases right then up
-                            # row=0 is top, so bit_pos = (5 - row) * 7 + col
-                            bit_pos = (5 - row) * 7 + col
-
-                            if dist_p1 < dist_p2:
-                                player1_mask |= 1 << bit_pos
+                        # Classify only if depth check passed
+                        if depth_ok and float(avg_bgr[2]) < 220.0:
+                            threshold = self.detection_threshold
+                            bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
+                            if avg_g >= threshold:
+                                player1_mask |= 1 << bit_pos  # GREEN -> player1
                             else:
-                                player2_mask |= 1 << bit_pos
+                                player2_mask |= 1 << bit_pos  # BLACK -> player2
 
         return player1_mask, player2_mask
 
@@ -445,6 +462,25 @@ class ConnectFourDetector:
         # Check consistency and update bitboards only if consistent
         if self.check_consistency():
             self.player1_bitboard, self.player2_bitboard = enforced_p1, enforced_p2
+            # Print G values and Depth grids when detection stabilizes
+            try:
+                g_rows = [
+                    " ".join(f"{int(self.last_g_values[r][c]):3d}" for c in range(7))
+                    for r in range(6)
+                ]
+                d_rows = [
+                    " ".join(
+                        (
+                            f"{self.last_depth_values[r][c]:.2f}" if self.last_depth_values[r][c] is not None else "  --  "
+                        )
+                        for c in range(7)
+                    )
+                    for r in range(6)
+                ]
+                print("G values (row 0=top):\n" + "\n".join(g_rows))
+                print("Depth (m, row 0=top):\n" + "\n".join(d_rows))
+            except Exception:
+                pass
 
         # Apply image adjustments for display
         frame = self.adjust_image(frame)
@@ -481,52 +517,44 @@ class ConnectFourDetector:
                     x, y = transformed[0, 0].astype(int)
 
                     if 0 <= x < frame.shape[1] and 0 <= y < frame.shape[0]:
-                        if self.player1_bitboard & (1 << bit_pos):
-                            cv2.circle(
-                                frame,
-                                (x, y),
-                                self.hole_diameter // 2,
-                                tuple(int(c) for c in self.player1_color),
-                                2,
-                            )  # Player 1 calibrated color
-                        elif self.player2_bitboard & (1 << bit_pos):
-                            cv2.circle(
-                                frame,
-                                (x, y),
-                                self.hole_diameter // 2,
-                                tuple(int(c) for c in self.player2_color),
-                                2,
-                            )  # Player 2 calibrated color
+                        # Draw immediate per-frame classification to keep UI responsive
+                        if enforced_p1 & (1 << bit_pos):
+                            color = (0, 255, 0)  # green
+                        elif enforced_p2 & (1 << bit_pos):
+                            color = (0, 0, 0)  # black
                         else:
-                            cv2.circle(
-                                frame, (x, y), self.hole_diameter // 2, (0, 255, 0), 1
-                            )  # Green outline for empty
-
-                        # Debug: show dist_p1, dist_p2 above and min_dist below each hole
-                        if 0 <= row < 6 and 0 <= col < 7:
-                            d1 = self.last_dist_p1[row][col]
-                            d2 = self.last_dist_p2[row][col]
-                            dm = self.last_min_dists[row][col]
-                            txt_top = f"P1:{d1:.1f} P2:{d2:.1f}"
-                            txt_bot = f"M:{dm:.1f}"
-                            cv2.putText(
-                                frame,
-                                txt_top,
-                                (x - self.hole_diameter // 2, y - self.hole_diameter // 2 - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.35,
-                                (255, 255, 255),
-                                1,
-                            )
-                            cv2.putText(
-                                frame,
-                                txt_bot,
-                                (x - 15, y + self.hole_diameter // 2 + 15),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.4,
-                                (200, 200, 200),
-                                1,
-                            )
+                            color = (0, 255, 255)  # empty/unknown this frame
+                        cv2.circle(
+                            frame,
+                            (x, y),
+                            self.hole_diameter // 2,
+                            color,
+                            2,
+                        )
+                        g_val = self.last_g_values[row][col]
+                        cv2.putText(
+                            frame,
+                            f"G:{g_val:.0f}",
+                            (x - 12, y + self.hole_diameter // 2 + 14),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (200, 200, 200),
+                            1,
+                        )
+                        d_val = self.last_depth_values[row][col]
+                        if d_val is not None:
+                            depth_txt = f"D:{d_val:.2f}m"
+                        else:
+                            depth_txt = "D:--"
+                        cv2.putText(
+                            frame,
+                            depth_txt,
+                            (x - 18, y + self.hole_diameter // 2 + 28),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (180, 180, 180),
+                            1,
+                        )
 
         # Convert to RGB for Dear PyGui and normalize to 0-1 range
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0

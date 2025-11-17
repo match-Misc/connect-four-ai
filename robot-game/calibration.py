@@ -47,8 +47,11 @@ class ConnectFourCalibrator:
         # RealSense pipeline and threading
         self.pipeline = None
         self.config = None
+        self.align = None
+        self.depth_scale = None
         self.cap = None  # preserved for backward compatibility (unused now)
         self.current_frame = None
+        self.current_depth_m = None  # aligned to color, meters
         self.running = True
         self.frame_lock = threading.Lock()
 
@@ -59,14 +62,72 @@ class ConnectFourCalibrator:
         self.player1_legend_id = None
         self.player2_legend_id = None
 
+    def load_last_calibration(self, filename="calibration.json"):
+        """Load previous calibration from JSON if available and prefill fields.
+
+        Fields loaded:
+        - corners (top_left, top_right, bottom_left, bottom_right) → self.corners list
+        - hole_diameter, horizontal_spacing, vertical_spacing
+        - player1_color, player2_color (optional)
+        - contrast, saturation, brightness (optional)
+        """
+        try:
+            if not os.path.exists(filename):
+                self.status_text = f"No previous calibration found at {filename}."
+                return False
+            with open(filename, "r") as f:
+                data = json.load(f)
+
+            # Corners
+            corners_dict = data.get("corners")
+            if corners_dict:
+                self.corners = [
+                    tuple(corners_dict.get("top_left", ())),
+                    tuple(corners_dict.get("top_right", ())),
+                    tuple(corners_dict.get("bottom_left", ())),
+                    tuple(corners_dict.get("bottom_right", ())),
+                ]
+                # Validate completeness
+                if any(len(pt) != 2 for pt in self.corners):
+                    self.corners = []
+
+            # Grid and image adjustments
+            self.hole_diameter = int(data.get("hole_diameter", self.hole_diameter))
+            self.h_spacing = int(data.get("horizontal_spacing", self.h_spacing))
+            self.v_spacing = int(data.get("vertical_spacing", self.v_spacing))
+            self.contrast = int(data.get("contrast", self.contrast))
+            self.saturation = int(data.get("saturation", self.saturation))
+            self.brightness = int(data.get("brightness", self.brightness))
+
+            # Colors (optional)
+            p1 = data.get("player1_color")
+            p2 = data.get("player2_color")
+            if p1 and p2:
+                self.player1_color = [int(v) for v in p1]
+                self.player2_color = [int(v) for v in p2]
+                self.calibration_complete = True
+
+            self.status_text = "Loaded previous calibration. Adjust or save as needed."
+            return True
+        except Exception as e:
+            self.status_text = f"Failed to load calibration: {e}"
+            return False
+
     def start_webcam(self):
         """Start RealSense color stream capture in a separate thread (name kept for compatibility)."""
         try:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
-            # Configure color stream (adjust resolution / fps if needed)
+            # Configure depth and color streams (matched resolution for alignment)
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
             self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            self.pipeline.start(self.config)
+            profile = self.pipeline.start(self.config)
+
+            # Depth scale (to convert z16 units to meters)
+            depth_sensor = profile.get_device().first_depth_sensor()
+            self.depth_scale = float(depth_sensor.get_depth_scale())
+            # Align depth to color
+            self.align = rs.align(rs.stream.color)
         except Exception as e:
             self.status_text = f"Error: Could not start RealSense pipeline ({e})"
             return False
@@ -75,12 +136,22 @@ class ConnectFourCalibrator:
             while self.running:
                 try:
                     frames = self.pipeline.wait_for_frames()
+                    if self.align is not None:
+                        frames = self.align.process(frames)
                     color_frame = frames.get_color_frame()
-                    if not color_frame:
+                    depth_frame = frames.get_depth_frame()
+                    if not color_frame or not depth_frame:
                         continue
                     frame = np.asanyarray(color_frame.get_data())
+                    depth_raw = np.asanyarray(depth_frame.get_data())  # uint16
+                    # Convert to meters
+                    if self.depth_scale is not None:
+                        depth_m = depth_raw.astype(np.float32) * self.depth_scale
+                    else:
+                        depth_m = depth_raw.astype(np.float32)
                     with self.frame_lock:
                         self.current_frame = frame.copy()
+                        self.current_depth_m = depth_m
                 except Exception as e:
                     self.status_text = f"RealSense error: {e}"
                 # Small sleep to avoid busy loop; RealSense already limits FPS
@@ -100,6 +171,58 @@ class ConnectFourCalibrator:
                 self.pipeline.stop()
             except Exception:
                 pass
+
+    def compute_depth_map(self):
+        """Compute a 6x7 depth map (meters) at each hole center from the latest aligned depth.
+
+        Returns a list of 6 lists (rows top->bottom), each with 7 depth values in meters or None if invalid.
+        """
+        if self.current_depth_m is None or len(self.corners) != 4:
+            return None
+
+        # Use same grid mapping as for drawing
+        corners = np.array(self.corners)
+        dst_points = np.array(
+            [
+                [0, 0],
+                [6 * self.h_spacing, 0],
+                [0, 5 * self.v_spacing],
+                [6 * self.h_spacing, 5 * self.v_spacing],
+            ],
+            dtype=np.float32,
+        )
+        src_points = corners.astype(np.float32)
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+        h, w = self.current_depth_m.shape[:2]
+        result = [[None for _ in range(7)] for _ in range(6)]
+
+        # Radius for sampling median depth to reduce noise
+        sample_radius = max(1, self.hole_diameter // 6)
+
+        for row in range(6):
+            for col in range(7):
+                grid_x = col * self.h_spacing
+                grid_y = row * self.v_spacing
+                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
+                transformed = cv2.perspectiveTransform(
+                    grid_point.reshape(1, 1, 2), np.linalg.inv(M)
+                )
+                x, y = transformed[0, 0]
+                xi, yi = int(round(x)), int(round(y))
+                if 0 <= xi < w and 0 <= yi < h:
+                    y0, y1 = max(0, yi - sample_radius), min(h, yi + sample_radius + 1)
+                    x0, x1 = max(0, xi - sample_radius), min(w, xi + sample_radius + 1)
+                    roi = self.current_depth_m[y0:y1, x0:x1]
+                    valid = roi[roi > 0]
+                    if valid.size > 0:
+                        result[row][col] = float(np.median(valid))
+                    else:
+                        result[row][col] = None
+                else:
+                    result[row][col] = None
+
+        return result
 
     def mouse_callback(self, sender, app_data, user_data):
         """Handle mouse clicks for defining board corners"""
@@ -349,6 +472,11 @@ class ConnectFourCalibrator:
             "brightness": self.brightness,
         }
 
+        # Capture and include depth map (meters) for all 42 positions
+        depth_map = self.compute_depth_map()
+        if depth_map is not None:
+            data["depth_m"] = depth_map
+
         try:
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
@@ -389,6 +517,11 @@ class ConnectFourCalibrator:
             data["contrast"] = self.contrast
             data["saturation"] = self.saturation
             data["brightness"] = self.brightness
+
+            # Update depth map as well
+            depth_map = self.compute_depth_map()
+            if depth_map is not None:
+                data["depth_m"] = depth_map
 
             # Keep existing colors if they exist, but don't require them
 
@@ -523,6 +656,14 @@ class ConnectFourCalibrator:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
+        # If colors were loaded, update legend now
+        if self.player1_legend_id and self.player1_color:
+            dpg.set_value(self.player1_legend_id, f"RGB{self.player1_color}")
+            dpg.configure_item(self.player1_legend_id, color=self.player1_color)
+        if self.player2_legend_id and self.player2_color:
+            dpg.set_value(self.player2_legend_id, f"RGB{self.player2_color}")
+            dpg.configure_item(self.player2_legend_id, color=self.player2_color)
+
     def calibrate_colors_callback(self, sender, app_data, user_data):
         """Callback for calibrate colors button"""
         if len(self.corners) == 4:
@@ -564,6 +705,9 @@ class ConnectFourCalibrator:
 
     def run_calibration(self):
         """Main calibration loop"""
+        # Preload last calibration if available
+        self.load_last_calibration()
+
         if not self.start_webcam():
             return False
 
