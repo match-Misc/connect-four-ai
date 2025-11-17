@@ -266,6 +266,36 @@ class GameWrapper:
         pygame.display.set_caption("Connect Four - Human vs AI")
         self.clock = pygame.time.Clock()
 
+        # Outbound robot connection (optional): load from robotconfig.json or env vars
+        # If not present, we will treat outbound robot control as disabled but keep server side enabled.
+        self.robot_ip: Optional[str] = None
+        self.robot_port: Optional[int] = None
+        config_path = Path(__file__).parent / "robotconfig.json"
+        try:
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    cfg = json.load(f)
+                self.robot_ip = str(cfg.get("robot_ip", os.environ.get("C4_ROBOT_IP", "localhost")))
+                self.robot_port = int(cfg.get("robot_port", os.environ.get("C4_ROBOT_PORT", "30002")))
+            else:
+                # Fallback to env vars only
+                env_ip = os.environ.get("C4_ROBOT_IP")
+                env_port = os.environ.get("C4_ROBOT_PORT")
+                if env_ip and env_port:
+                    self.robot_ip = env_ip
+                    try:
+                        self.robot_port = int(env_port)
+                    except ValueError:
+                        self.robot_port = None
+        except Exception as e:
+            print(f"Warning: failed to load robotconfig.json: {e}")
+            self.robot_ip = None
+            self.robot_port = None
+
+        # If either is missing, outbound robot connection attempts will be skipped.
+        if self.robot_ip is None or self.robot_port is None:
+            print("Robot outbound connection disabled (missing robot_ip/robot_port).")
+
     def start_robot_server(self) -> bool:
         """Start a simple TCP server that accepts a single client (robot).
 
@@ -485,6 +515,9 @@ class GameWrapper:
 
     def connect_to_robot(self) -> bool:
         """Connect to the robot TCP server."""
+        if self.robot_ip is None or self.robot_port is None:
+            # Silently ignore; outbound robot control not configured.
+            return False
         try:
             self.robot_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.robot_socket.connect((self.robot_ip, self.robot_port))

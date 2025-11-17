@@ -323,7 +323,7 @@ class ConnectFourDetector:
                     and 0 <= y < adjusted_frame.shape[0]
                 ):
                     # Sample a region around the hole center
-                    radius = max(3, self.hole_diameter // 4)
+                    radius = int(self.hole_diameter/2)
                     roi = adjusted_frame[
                         max(0, y - radius) : min(adjusted_frame.shape[0], y + radius),
                         max(0, x - radius) : min(adjusted_frame.shape[1], x + radius),
@@ -339,22 +339,27 @@ class ConnectFourDetector:
                         depth_ok = False
                         measured_depth = None
                         if self.current_depth_m is not None:
-                            # sample median depth in small ROI around (x,y)
+                            # Sample mean depth using full hole diameter from calibration
                             h, w = self.current_depth_m.shape[:2]
-                            radius = max(1, self.hole_diameter // 6)
+                            radius = int(self.hole_diameter / 2)
                             y0, y1 = max(0, y - radius), min(h, y + radius + 1)
                             x0, x1 = max(0, x - radius), min(w, x + radius + 1)
                             d_roi = self.current_depth_m[y0:y1, x0:x1]
-                            valid = d_roi[d_roi > 0]
-                            if valid.size > 0:
-                                measured_depth = float(np.median(valid))
+                            # Reject only if more than 50% of pixels are missing depth
+                            if d_roi.size > 0:
+                                valid_pixels = np.sum(d_roi > 0)
+                                valid_ratio = valid_pixels / d_roi.size
+                                if valid_ratio >= 0.5:
+                                    # At least 50% valid, calculate mean from valid pixels only
+                                    measured_depth = float(np.mean(d_roi[d_roi > 0]))
+                                else:
+                                    # More than 50% missing depth
+                                    measured_depth = None
                         self.last_depth_values[row][col] = measured_depth
 
                         if (
                             measured_depth is not None
                             and self.calib_depth_m is not None
-                            and 0 <= row < 6
-                            and 0 <= col < 7
                         ):
                             calib_d = self.calib_depth_m[row][col]
                             if calib_d is not None:
@@ -372,43 +377,6 @@ class ConnectFourDetector:
                                 player2_mask |= 1 << bit_pos  # BLACK -> player2
 
         return player1_mask, player2_mask
-
-    def enforce_gravity(self, player1_mask, player2_mask):
-        """Enforce gravity: pieces can only be present if rows below are also present"""
-        combined_mask = player1_mask | player2_mask
-        enforced_p1 = 0
-        enforced_p2 = 0
-
-        for col in range(7):
-            # Collect pieces in this column from bottom to top (row 0 is bottom)
-            column_pieces = []
-            for row in range(6):
-                bit_pos = row * 7 + col
-                if combined_mask & (1 << bit_pos):
-                    column_pieces.append(bit_pos)
-
-            # Sort by row (bottom to top)
-            column_pieces.sort(key=lambda pos: pos // 7)
-
-            # Enforce gravity: only keep pieces from the bottom up, no gaps
-            valid_positions = []
-            for i, pos in enumerate(column_pieces):
-                expected_row = i  # 0 is bottom
-                actual_row = pos // 7
-                if actual_row == expected_row:
-                    valid_positions.append(pos)
-                else:
-                    # Gap detected, stop here
-                    break
-
-            # Assign back to players
-            for pos in valid_positions:
-                if player1_mask & (1 << pos):
-                    enforced_p1 |= 1 << pos
-                elif player2_mask & (1 << pos):
-                    enforced_p2 |= 1 << pos
-
-        return enforced_p1, enforced_p2
 
     def check_consistency(self):
         """Check if recent detections within the time window are consistent"""
@@ -443,14 +411,11 @@ class ConnectFourDetector:
             frame = self.current_frame.copy()
 
         # Detect pieces
-        raw_p1, raw_p2 = self.detect_pieces(frame)
-
-        # Enforce gravity
-        enforced_p1, enforced_p2 = self.enforce_gravity(raw_p1, raw_p2)
+        player1_mask, player2_mask = self.detect_pieces(frame)
 
         # Add to history with timestamp
         current_time = time.time()
-        self.detection_history.append((current_time, enforced_p1, enforced_p2))
+        self.detection_history.append((current_time, player1_mask, player2_mask))
 
         # Prune old entries outside the consistency window
         self.detection_history = [
@@ -461,7 +426,7 @@ class ConnectFourDetector:
 
         # Check consistency and update bitboards only if consistent
         if self.check_consistency():
-            self.player1_bitboard, self.player2_bitboard = enforced_p1, enforced_p2
+            self.player1_bitboard, self.player2_bitboard = player1_mask, player2_mask
             # Print G values and Depth grids when detection stabilizes
             try:
                 g_rows = [
@@ -518,9 +483,9 @@ class ConnectFourDetector:
 
                     if 0 <= x < frame.shape[1] and 0 <= y < frame.shape[0]:
                         # Draw immediate per-frame classification to keep UI responsive
-                        if enforced_p1 & (1 << bit_pos):
+                        if player1_mask & (1 << bit_pos):
                             color = (0, 255, 0)  # green
-                        elif enforced_p2 & (1 << bit_pos):
+                        elif player2_mask & (1 << bit_pos):
                             color = (0, 0, 0)  # black
                         else:
                             color = (0, 255, 255)  # empty/unknown this frame
@@ -661,8 +626,6 @@ class ConnectFourDetector:
             return None, None
 
         player1_mask, player2_mask = self.detect_pieces(frame)
-        # Enforce gravity for non-GUI mode as well
-        player1_mask, player2_mask = self.enforce_gravity(player1_mask, player2_mask)
         self.stop_webcam()
 
         return player1_mask, player2_mask
