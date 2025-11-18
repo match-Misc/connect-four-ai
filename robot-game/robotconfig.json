@@ -1,4 +1,4 @@
 {
-  "robot_ip": "localhost",
-  "robot_port": 30002
+  "robot_ip": "192.168.12.89",
+  "robot_port": 30020
 }

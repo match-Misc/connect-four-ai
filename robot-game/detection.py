@@ -81,7 +81,9 @@ class ConnectFourDetector:
 
         # Robustness improvements
         self.consistency_window = self.CONSISTENCY_WINDOW
-        self.detection_history = []  # list of (timestamp, player1_mask, player2_mask)
+        self.last_observed_state = [-1] * (6 * 7)  # -1 = uninitialized, 0 = empty, 1/2 = players
+        self.last_observed_since = [0.0] * (6 * 7)
+        self.validated_state = [0] * (6 * 7)
 
         # Dynamic detection threshold & last sampled G values for overlay/prints
         self.detection_threshold = self.DETECTION_THRESHOLD
@@ -378,29 +380,43 @@ class ConnectFourDetector:
 
         return player1_mask, player2_mask
 
-    def check_consistency(self):
-        """Check if recent detections within the time window are consistent"""
-        if not self.detection_history:
-            return False
+    def update_stable_board(self, player1_mask, player2_mask, current_time):
+        """Update validated board state based on stability over the consistency window."""
+        updated = False
 
-        current_time = time.time()
-        # Filter recent detections
-        recent_detections = [
-            (p1, p2)
-            for ts, p1, p2 in self.detection_history
-            if current_time - ts <= self.consistency_window
-        ]
+        for pos in range(6 * 7):
+            bit = 1 << pos
+            if player1_mask & bit:
+                current_status = 1
+            elif player2_mask & bit:
+                current_status = 2
+            else:
+                current_status = 0
 
-        if len(recent_detections) < 2:
-            return False
+            if self.last_observed_state[pos] != current_status:
+                self.last_observed_state[pos] = current_status
+                self.last_observed_since[pos] = current_time
+            elif self.last_observed_since[pos] == 0.0:
+                self.last_observed_since[pos] = current_time
 
-        # Check if all recent detections match
-        first_p1, first_p2 = recent_detections[0]
-        for p1, p2 in recent_detections[1:]:
-            if p1 != first_p1 or p2 != first_p2:
-                return False
+            stable_duration = current_time - self.last_observed_since[pos]
 
-        return True
+            if (
+                stable_duration >= self.consistency_window
+                and self.validated_state[pos] != current_status
+            ):
+                self.validated_state[pos] = current_status
+                updated = True
+
+        stable_p1 = 0
+        stable_p2 = 0
+        for pos, status in enumerate(self.validated_state):
+            if status == 1:
+                stable_p1 |= 1 << pos
+            elif status == 2:
+                stable_p2 |= 1 << pos
+
+        return stable_p1, stable_p2, updated
 
     def update_frame(self):
         """Update the displayed frame in the GUI"""
@@ -413,20 +429,13 @@ class ConnectFourDetector:
         # Detect pieces
         player1_mask, player2_mask = self.detect_pieces(frame)
 
-        # Add to history with timestamp
         current_time = time.time()
-        self.detection_history.append((current_time, player1_mask, player2_mask))
+        stable_p1, stable_p2, updated = self.update_stable_board(
+            player1_mask, player2_mask, current_time
+        )
 
-        # Prune old entries outside the consistency window
-        self.detection_history = [
-            (ts, p1, p2)
-            for ts, p1, p2 in self.detection_history
-            if current_time - ts <= self.consistency_window
-        ]
-
-        # Check consistency and update bitboards only if consistent
-        if self.check_consistency():
-            self.player1_bitboard, self.player2_bitboard = player1_mask, player2_mask
+        if updated:
+            self.player1_bitboard, self.player2_bitboard = stable_p1, stable_p2
             # Print G values and Depth grids when detection stabilizes
             try:
                 g_rows = [
