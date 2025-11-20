@@ -38,7 +38,7 @@ import numpy as np
 class ConnectFourDetector:
     # Tunable parameters for detection
     DETECTION_THRESHOLD = 80  # Threshold on G channel in RGB (0-255). Below: black, above: green.
-    CONSISTENCY_WINDOW = 1.0  # Seconds for detection consistency check
+    CONSISTENCY_WINDOW = 2.5  # Seconds for detection consistency check
     DEPTH_TOLERANCE_M = 0.01  # +/- 1 cm tolerance for depth verification
 
     def __init__(self, calibration_file="calibration.json"):
@@ -370,7 +370,7 @@ class ConnectFourDetector:
                         # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
 
                         # Classify only if depth check passed
-                        if depth_ok and float(avg_bgr[2]) < 220.0:
+                        if depth_ok and float(avg_bgr[2]) < 100.0:
                             threshold = self.detection_threshold
                             bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
                             if avg_g >= threshold:

@@ -586,6 +586,7 @@ class GameWrapper:
 
     def get_ai_move(self) -> Optional[int]:
         """Get the AI's next move."""
+        print("Getting AI move... ")
         if not self.ai_player:
             return None
 
@@ -619,6 +620,7 @@ class GameWrapper:
                     board_chars.append(".")
 
         board_string = "".join(board_chars)
+        print(f"Updated board string for Position: {board_string}")
         self.position = Position.from_board_string(board_string)
 
     def find_winning_positions(
