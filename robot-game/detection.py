@@ -117,7 +117,7 @@ class ConnectFourDetector:
             if "depth_m" in self.calibration_data:
                 self.calib_depth_m = self.calibration_data["depth_m"]
 
-            self.detection_threshold = (self.player1_color[1]+self.player2_color[1])/2
+            self.detection_threshold = (self.player1_color[1]+self.player2_color[1])/3
 
             return True
         except FileNotFoundError:
@@ -298,12 +298,12 @@ class ConnectFourDetector:
         src_points = corners.astype(np.float32)
         M = cv2.getPerspectiveTransform(src_points, dst_points)
 
-        player1_mask = 0  # will represent GREEN
-        player2_mask = 0  # will represent BLACK
+        player1_mask = 0  # will represent Black
+        player2_mask = 0  # will represent Green
         # Reset last values
         self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]
         self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
-
+        timer = time.time()
         # Sample each hole position
         for row in range(6):  # 6 rows
             for col in range(7):  # 7 columns
@@ -338,6 +338,7 @@ class ConnectFourDetector:
                         self.last_g_values[row][col] = avg_g
 
                         # Depth gating: require measured depth within +/- tolerance of calibration depth
+                        
                         depth_ok = False
                         measured_depth = None
                         if self.current_depth_m is not None:
@@ -351,11 +352,11 @@ class ConnectFourDetector:
                             if d_roi.size > 0:
                                 valid_pixels = np.sum(d_roi > 0)
                                 valid_ratio = valid_pixels / d_roi.size
-                                if valid_ratio >= 0.5:
-                                    # At least 50% valid, calculate mean from valid pixels only
+                                if valid_ratio >= 0.95:
+                                    # At least 95% valid, calculate mean from valid pixels only
                                     measured_depth = float(np.mean(d_roi[d_roi > 0]))
                                 else:
-                                    # More than 50% missing depth
+                                    # More than 5% missing depth
                                     measured_depth = None
                         self.last_depth_values[row][col] = measured_depth
 
@@ -368,16 +369,17 @@ class ConnectFourDetector:
                                 if abs(measured_depth - float(calib_d)) <= self.DEPTH_TOLERANCE_M:
                                     depth_ok = True
                         # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
-
+                        
                         # Classify only if depth check passed
-                        if depth_ok and float(avg_bgr[2]) < 100.0:
+                        if depth_ok and float(avg_bgr[2]) < 150.0 and float(avg_bgr[0]) < 150.0:
                             threshold = self.detection_threshold
                             bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
-                            if avg_g >= threshold:
-                                player1_mask |= 1 << bit_pos  # GREEN -> player1
+                            if avg_g <= threshold:
+                                player1_mask |= 1 << bit_pos  # Black -> player1
                             else:
-                                player2_mask |= 1 << bit_pos  # BLACK -> player2
+                                player2_mask |= 1 << bit_pos  # Green -> player2
 
+        print(elapsed:=time.time()-timer)
         return player1_mask, player2_mask
 
     def update_stable_board(self, player1_mask, player2_mask, current_time):
@@ -420,6 +422,7 @@ class ConnectFourDetector:
 
     def update_frame(self):
         """Update the displayed frame in the GUI"""
+        timer = time.time()
         with self.frame_lock:
             if self.current_frame is None:
                 return
@@ -433,6 +436,9 @@ class ConnectFourDetector:
         stable_p1, stable_p2, updated = self.update_stable_board(
             player1_mask, player2_mask, current_time
         )
+
+        
+        print(elapsed:=time.time()-timer)
 
         if updated:
             self.player1_bitboard, self.player2_bitboard = stable_p1, stable_p2
@@ -493,9 +499,9 @@ class ConnectFourDetector:
                     if 0 <= x < frame.shape[1] and 0 <= y < frame.shape[0]:
                         # Draw immediate per-frame classification to keep UI responsive
                         if player1_mask & (1 << bit_pos):
-                            color = (0, 255, 0)  # green
-                        elif player2_mask & (1 << bit_pos):
                             color = (0, 0, 0)  # black
+                        elif player2_mask & (1 << bit_pos):
+                            color = (0, 255, 0)  # green
                         else:
                             color = (0, 255, 255)  # empty/unknown this frame
                         cv2.circle(
@@ -547,6 +553,8 @@ class ConnectFourDetector:
                 self.bitboard_text_id,
                 f"Mask: {mask}\n{mask_visual}\n\nPosition: {position}\n{position_visual}",
             )
+
+        
 
     def create_gui(self):
         """Create the Dear PyGui interface"""
@@ -606,6 +614,7 @@ class ConnectFourDetector:
         while dpg.is_dearpygui_running():
             self.update_frame()
             dpg.render_dearpygui_frame()
+            
 
         self.stop_webcam()
         self.stop_socket_server()
