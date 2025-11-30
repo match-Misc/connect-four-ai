@@ -1,2 +1,2 @@
 #!/bin/bash
-source cargo/python/.venv/bin/activate
+source crates/python/.venv/bin/activate
