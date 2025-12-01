@@ -58,6 +58,7 @@ class ConnectFourCalibrator:
         # GUI elements
         self.window_id = None
         self.texture_id = None
+        self.image_id = None
         self.status_text = ""
         self.player1_legend_id = None
         self.player2_legend_id = None
@@ -119,8 +120,8 @@ class ConnectFourCalibrator:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
             # Configure depth and color streams (matched resolution for alignment)
-            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+            self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
             profile = self.pipeline.start(self.config)
 
             # Depth scale (to convert z16 units to meters)
@@ -236,8 +237,8 @@ class ConnectFourCalibrator:
         rel_x = mouse_x - image_pos[0]
         rel_y = mouse_y - image_pos[1]
 
-        # Check if click is within image bounds (640x480)
-        if 0 <= rel_x < 640 and 0 <= rel_y < 480:
+        # Check if click is within image bounds (1920x1080)
+        if 0 <= rel_x < 1920 and 0 <= rel_y < 1080:
             if len(self.corners) < 4:
                 # Scale coordinates to match actual image size if needed
                 # For now, assume 1:1 mapping
@@ -556,23 +557,25 @@ class ConnectFourCalibrator:
     def create_gui(self):
         """Create the Dear PyGui interface"""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four Calibration", width=1200, height=800)
+        dpg.create_viewport(title="Connect Four Calibration", width=2200, height=1200)
 
-        with dpg.window(label="Calibration", width=1200, height=800) as self.window_id:
+        # Create texture registry outside of window
+        with dpg.texture_registry():
+            # Create a placeholder texture (will be updated with actual frame)
+            self.texture_id = dpg.add_raw_texture(
+                1920,
+                1080,
+                np.zeros((1920 * 1080 * 3,), dtype=np.float32),
+                format=dpg.mvFormat_Float_rgb,
+            )
+
+        with dpg.window(label="Calibration", width=2200, height=1200) as self.window_id:
             with dpg.group(horizontal=True):
                 # Left side - Image display
-                with dpg.child_window(width=800, height=600):
+                with dpg.child_window(width=1920, height=1100):
                     dpg.add_text("RealSense Feed - Click to define corners")
-                    with dpg.texture_registry():
-                        # Create a placeholder texture (will be updated with actual frame)
-                        self.texture_id = dpg.add_raw_texture(
-                            640,
-                            480,
-                            np.zeros((640 * 480 * 3,), dtype=np.float32),
-                            format=dpg.mvFormat_Float_rgb,
-                        )
                     self.image_id = dpg.add_image(
-                        self.texture_id, width=640, height=480
+                        self.texture_id, width=1920, height=1080
                     )
                     # Use mouse handlers instead of item handlers for better coordinate handling
                     with dpg.handler_registry():
@@ -591,7 +594,7 @@ class ConnectFourCalibrator:
                         label="Diameter",
                         default_value=self.hole_diameter,
                         min_value=10,
-                        max_value=100,
+                        max_value=200,
                         callback=lambda s, a: setattr(self, "hole_diameter", a),
                     )
 

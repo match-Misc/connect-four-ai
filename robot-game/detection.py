@@ -136,8 +136,10 @@ class ConnectFourDetector:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
             # Enable depth+color, align depth to color for per-pixel depth
-            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            # self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            # self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+            self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
             profile = self.pipeline.start(self.config)
             # Depth scale
             depth_sensor = profile.get_device().first_depth_sensor()
@@ -371,7 +373,7 @@ class ConnectFourDetector:
                         # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
                         
                         # Classify only if depth check passed
-                        if depth_ok and float(avg_bgr[2]) < 150.0 and float(avg_bgr[0]) < 150.0:
+                        if depth_ok and float(avg_bgr[2]) < 250.0 and float(avg_bgr[0]) < 250.0:
                             threshold = self.detection_threshold
                             bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
                             if avg_g <= threshold:
@@ -559,21 +561,21 @@ class ConnectFourDetector:
     def create_gui(self):
         """Create the Dear PyGui interface"""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four Detection", width=1000, height=700)
+        dpg.create_viewport(title="Connect Four Detection", width=2200, height=1200)
 
-        with dpg.window(label="Detection", width=1000, height=700) as self.window_id:
+        with dpg.window(label="Detection", width=2200, height=1200) as self.window_id:
             with dpg.group(horizontal=True):
                 # Left side - Image display
-                with dpg.child_window(width=700, height=600):
+                with dpg.child_window(width=1920, height=1100):
                     dpg.add_text("RealSense Feed - Real-time Detection")
                     with dpg.texture_registry():
                         self.texture_id = dpg.add_raw_texture(
-                            640,
-                            480,
-                            np.zeros((640 * 480 * 3,), dtype=np.float32),
+                            1920,
+                            1080,
+                            np.zeros((1920 * 1080 * 3,), dtype=np.float32),
                             format=dpg.mvFormat_Float_rgb,
                         )
-                    dpg.add_image(self.texture_id, width=640, height=480)
+                    dpg.add_image(self.texture_id, width=1920, height=1080)
 
                 # Right side - Bitboard display
                 with dpg.child_window(width=280, height=600):
