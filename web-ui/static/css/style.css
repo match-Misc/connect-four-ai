@@ -104,16 +104,16 @@ p {
 }
 
 #player2-indicator .player-rectangle {
-    background-color: #6B7280; /* Lighter gray for inactive */
-    transition: background-color 0.3s;
+    background-color: #6B7280;
 }
 
+/* Ensure proper styling for player 2 active state */
 #player2-indicator.active .player-rectangle {
-    background-color: #1F2937; /* Darker gray when active */
+    background-color: #1F2937 !important;
 }
 
 #player2-indicator.inactive .player-rectangle {
-    background-color: #6B7280; /* Lighter gray when inactive */
+    background-color: #6B7280 !important;
 }
 
 .row {

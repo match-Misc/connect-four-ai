@@ -9,12 +9,13 @@ function updatePlayerIndicators(activePlayer, inactivePlayer) {
     const activeIndicator = document.getElementById(`player${activePlayer}-indicator`);
     const inactiveIndicator = document.getElementById(`player${inactivePlayer}-indicator`);
     
-    // Remove active class from both
-    activeIndicator.classList.remove('active');
-    inactiveIndicator.classList.remove('active');
+    // Reset both indicators to ensure clean state
+    document.getElementById('player1-indicator').classList.remove('active', 'inactive');
+    document.getElementById('player2-indicator').classList.remove('active', 'inactive');
     
-    // Add appropriate classes
+    // Set active player
     activeIndicator.classList.add('active');
+    // Set inactive player  
     inactiveIndicator.classList.add('inactive');
 }
 
