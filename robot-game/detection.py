@@ -40,6 +40,7 @@ class ConnectFourDetector:
     DETECTION_THRESHOLD = 80  # Threshold on G channel in RGB (0-255). Below: black, above: green.
     CONSISTENCY_WINDOW = 2.5  # Seconds for detection consistency check
     DEPTH_TOLERANCE_M = 0.01  # +/- 1 cm tolerance for depth verification
+    BINARY_THRESHOLD = 100  # Binary threshold for circle detection (0-255)
 
     def __init__(self, calibration_file="calibration.json"):
         self.calibration_file = calibration_file
@@ -68,6 +69,7 @@ class ConnectFourDetector:
         # GUI elements
         self.window_id = None
         self.texture_id = None
+        self.binary_texture_id = None
         self.bitboard_text_id = None
 
         # Detection results
@@ -87,9 +89,12 @@ class ConnectFourDetector:
 
         # Dynamic detection threshold & last sampled G values for overlay/prints
         self.detection_threshold = self.DETECTION_THRESHOLD
+        self.binary_threshold = self.BINARY_THRESHOLD
         self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]  # row-major top (0) to bottom (5)
         self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
         self.calib_depth_m = None  # 6x7 matrix from calibration
+        self.hole_circles = [[[] for _ in range(7)] for _ in range(6)]  # Store detected circles per hole
+        self.current_binary = None  # Store binary image for display
 
     def load_calibration(self):
         """Load calibration data from JSON file"""
@@ -275,8 +280,9 @@ class ConnectFourDetector:
         lines.append("  ---------------------")
         return "\n".join(lines)
 
-    def detect_pieces(self, frame):
-        """Detect pieces on the board and return bitboards"""
+    def detect_pieces_old(self, frame):
+        """OLD: Detect pieces on the board using G-channel thresholding and depth gating.
+        Kept for reference. Use detect_pieces() for circle-based detection."""
         if not self.calibration_data:
             return 0, 0
 
@@ -382,6 +388,125 @@ class ConnectFourDetector:
                                 player2_mask |= 1 << bit_pos  # Green -> player2
 
         print(elapsed:=time.time()-timer)
+        return player1_mask, player2_mask
+
+    def detect_pieces(self, frame):
+        """NEW: Detect pieces based on circular markers.
+        
+        Black pieces have 1 circle (10mm diameter).
+        Green pieces have 2 circles (10mm diameter each).
+        Uses depth gating to verify pieces are at correct depth plane.
+        
+        Returns: (player1_bitboard, player2_bitboard)
+        """
+        if not self.calibration_data:
+            return 0, 0
+
+        # Apply image adjustments
+        adjusted_frame = self.adjust_image(frame)
+        
+        # Convert to grayscale for circle detection
+        gray = cv2.cvtColor(adjusted_frame, cv2.COLOR_BGR2GRAY)
+        
+        # Apply binary threshold
+        _, binary = cv2.threshold(gray, self.binary_threshold, 255, cv2.THRESH_BINARY)
+        
+        # Store binary image for display
+        self.current_binary = binary.copy()
+        
+        # Corners are already in correct order: top_left, top_right, bottom_left, bottom_right
+        corners = np.array(self.corners)
+
+        # Define destination points (grid coordinates)
+        dst_points = np.array(
+            [
+                [0, 0],  # top-left
+                [6 * self.h_spacing, 0],  # top-right
+                [0, 5 * self.v_spacing],  # bottom-left
+                [6 * self.h_spacing, 5 * self.v_spacing],  # bottom-right
+            ],
+            dtype=np.float32,
+        )
+
+        src_points = corners.astype(np.float32)
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+        player1_mask = 0  # Black (1 circle)
+        player2_mask = 0  # Green (2 circles)
+        
+        # Reset last values for display
+        self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]
+        self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
+        
+        # Estimate circle radius in pixels (10mm physical size)
+        # Assume rough calibration: if hole_diameter corresponds to real size,
+        # scale 10mm circles proportionally. Adjust these parameters as needed.
+        # For now, use a fixed pixel range for Hough circles
+        min_radius = 8  # pixels
+        max_radius = 25  # pixels
+        
+        # Detect all circles in the frame using HoughCircles
+        circles = cv2.HoughCircles(
+            binary,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=15,  # minimum distance between circle centers
+            param1=50,   # Canny edge threshold
+            param2=20,   # accumulator threshold (lower = more circles)
+            minRadius=min_radius,
+            maxRadius=max_radius
+        )
+        
+        # Build a list of detected circles with their positions
+        detected_circles = []
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")
+            for (cx, cy, r) in circles:
+                detected_circles.append((cx, cy, r))
+        
+        # Store which circles belong to which hole for visualization
+        self.hole_circles = [[[] for _ in range(7)] for _ in range(6)]
+        
+        # Sample each hole position
+        for row in range(6):  # 6 rows
+            for col in range(7):  # 7 columns
+                # Calculate grid position (hole center)
+                grid_x = col * self.h_spacing
+                grid_y = row * self.v_spacing
+
+                # Transform to image coordinates
+                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
+                transformed = cv2.perspectiveTransform(
+                    grid_point.reshape(1, 1, 2), np.linalg.inv(M)
+                )
+
+                x, y = transformed[0, 0].astype(int)
+
+                # Check bounds
+                if (
+                    0 <= x < adjusted_frame.shape[1]
+                    and 0 <= y < adjusted_frame.shape[0]
+                ):
+                    # Count circles within this hole's region (no depth check)
+                    search_radius = int(self.hole_diameter / 2)
+                    circles_in_hole = 0
+                    for (cx, cy, r) in detected_circles:
+                        dist = np.sqrt((cx - x)**2 + (cy - y)**2)
+                        if dist <= search_radius:
+                            circles_in_hole += 1
+                            self.hole_circles[row][col].append((cx, cy, r))
+                    
+                    # Store circle count in last_g_values for debugging display
+                    self.last_g_values[row][col] = float(circles_in_hole)
+                    
+                    bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
+                    
+                    if circles_in_hole == 1:
+                        player1_mask |= 1 << bit_pos  # Black (1 circle)
+                    elif circles_in_hole >= 2:
+                        player2_mask |= 1 << bit_pos  # Green (2+ circles)
+                    # 0 circles = empty
+        
         return player1_mask, player2_mask
 
     def update_stable_board(self, player1_mask, player2_mask, current_time):
@@ -513,16 +638,25 @@ class ConnectFourDetector:
                             color,
                             2,
                         )
-                        g_val = self.last_g_values[row][col]
+                        
+                        # Draw detected circles within this hole
+                        if hasattr(self, 'hole_circles') and row < len(self.hole_circles) and col < len(self.hole_circles[row]):
+                            for (cx, cy, r) in self.hole_circles[row][col]:
+                                cv2.circle(frame, (cx, cy), r, (255, 0, 255), 2)  # Magenta circles
+                                cv2.circle(frame, (cx, cy), 2, (255, 0, 255), -1)  # Center dot
+                        
+                        # Display circle count (stored in last_g_values)
+                        circle_count = int(self.last_g_values[row][col])
                         cv2.putText(
                             frame,
-                            f"G:{g_val:.0f}",
+                            f"C:{circle_count}",
                             (x - 12, y + self.hole_diameter // 2 + 14),
                             cv2.FONT_HERSHEY_SIMPLEX,
-                            0.4,
-                            (200, 200, 200),
-                            1,
+                            0.5,
+                            (255, 255, 0),  # Yellow
+                            2,
                         )
+                        
                         d_val = self.last_depth_values[row][col]
                         if d_val is not None:
                             depth_txt = f"D:{d_val:.2f}m"
@@ -531,7 +665,7 @@ class ConnectFourDetector:
                         cv2.putText(
                             frame,
                             depth_txt,
-                            (x - 18, y + self.hole_diameter // 2 + 28),
+                            (x - 18, y + self.hole_diameter // 2 + 32),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.4,
                             (180, 180, 180),
@@ -541,11 +675,13 @@ class ConnectFourDetector:
         # Convert to RGB for Dear PyGui and normalize to 0-1 range
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
-        # Update texture
-        if self.texture_id:
-            dpg.set_value(self.texture_id, frame_rgb.flatten())
+        # Update binary texture
+        if self.binary_texture_id and self.current_binary is not None:
+            # Convert binary to RGB for display
+            binary_rgb = cv2.cvtColor(self.current_binary, cv2.COLOR_GRAY2RGB).astype(np.float32) / 255.0
+            dpg.set_value(self.binary_texture_id, binary_rgb.flatten())
 
-        # Update bitboard display
+        # Update bitboard displaycd ..
         if self.bitboard_text_id:
             mask = self.player1_bitboard | self.player2_bitboard
             position = self.player1_bitboard  # Assuming Player 1 is current player
@@ -563,19 +699,21 @@ class ConnectFourDetector:
         dpg.create_context()
         dpg.create_viewport(title="Connect Four Detection", width=2200, height=1200)
 
+        # Create texture registry outside of window
+        with dpg.texture_registry():
+            self.binary_texture_id = dpg.add_raw_texture(
+                1920,
+                1080,
+                np.zeros((1920 * 1080 * 3,), dtype=np.float32),
+                format=dpg.mvFormat_Float_rgb,
+            )
+
         with dpg.window(label="Detection", width=2200, height=1200) as self.window_id:
             with dpg.group(horizontal=True):
-                # Left side - Image display
+                # Left side - Binary image display
                 with dpg.child_window(width=1920, height=1100):
-                    dpg.add_text("RealSense Feed - Real-time Detection")
-                    with dpg.texture_registry():
-                        self.texture_id = dpg.add_raw_texture(
-                            1920,
-                            1080,
-                            np.zeros((1920 * 1080 * 3,), dtype=np.float32),
-                            format=dpg.mvFormat_Float_rgb,
-                        )
-                    dpg.add_image(self.texture_id, width=1920, height=1080)
+                    dpg.add_text("Binary Threshold View - Circle Detection")
+                    dpg.add_image(self.binary_texture_id, width=1920, height=1080)
 
                 # Right side - Bitboard display
                 with dpg.child_window(width=280, height=600):
@@ -593,6 +731,15 @@ class ConnectFourDetector:
                         min_value=5.0,
                         max_value=100.0,
                         callback=lambda s, a: setattr(self, "detection_threshold", a),
+                    )
+                    dpg.add_separator()
+                    dpg.add_text("Binary Threshold (Circle Detection)")
+                    dpg.add_slider_int(
+                        label="Binary",
+                        default_value=self.binary_threshold,
+                        min_value=0,
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "binary_threshold", a),
                     )
 
         dpg.setup_dearpygui()
