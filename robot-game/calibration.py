@@ -54,6 +54,8 @@ class ConnectFourCalibrator:
         self.current_depth_m = None  # aligned to color, meters
         self.running = True
         self.frame_lock = threading.Lock()
+        self.frame_width = 640  # Default, will be updated
+        self.frame_height = 480  # Default, will be updated
 
         # GUI elements
         self.window_id = None
@@ -120,9 +122,17 @@ class ConnectFourCalibrator:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
             # Configure depth and color streams (matched resolution for alignment)
-            self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
-            self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            # self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+            # self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
             profile = self.pipeline.start(self.config)
+
+            # Get actual stream dimensions
+            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            self.frame_width = color_profile.width()
+            self.frame_height = color_profile.height()
+            print(f"RealSense resolution: {self.frame_width}x{self.frame_height}")
 
             # Depth scale (to convert z16 units to meters)
             depth_sensor = profile.get_device().first_depth_sensor()
@@ -237,8 +247,8 @@ class ConnectFourCalibrator:
         rel_x = mouse_x - image_pos[0]
         rel_y = mouse_y - image_pos[1]
 
-        # Check if click is within image bounds (1920x1080)
-        if 0 <= rel_x < 1920 and 0 <= rel_y < 1080:
+        # Check if click is within image bounds
+        if 0 <= rel_x < self.frame_width and 0 <= rel_y < self.frame_height:
             if len(self.corners) < 4:
                 # Scale coordinates to match actual image size if needed
                 # For now, assume 1:1 mapping
@@ -563,19 +573,19 @@ class ConnectFourCalibrator:
         with dpg.texture_registry():
             # Create a placeholder texture (will be updated with actual frame)
             self.texture_id = dpg.add_raw_texture(
-                1920,
-                1080,
-                np.zeros((1920 * 1080 * 3,), dtype=np.float32),
+                self.frame_width,
+                self.frame_height,
+                np.zeros((self.frame_width * self.frame_height * 3,), dtype=np.float32),
                 format=dpg.mvFormat_Float_rgb,
             )
 
         with dpg.window(label="Calibration", width=2200, height=1200) as self.window_id:
             with dpg.group(horizontal=True):
                 # Left side - Image display
-                with dpg.child_window(width=1920, height=1100):
+                with dpg.child_window(width=self.frame_width, height=self.frame_height + 20):
                     dpg.add_text("RealSense Feed - Click to define corners")
                     self.image_id = dpg.add_image(
-                        self.texture_id, width=1920, height=1080
+                        self.texture_id, width=self.frame_width, height=self.frame_height
                     )
                     # Use mouse handlers instead of item handlers for better coordinate handling
                     with dpg.handler_registry():

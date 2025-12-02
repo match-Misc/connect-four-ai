@@ -329,6 +329,11 @@ class GameWrapper:
                                 self.robot_client_socket.close()
                             except Exception:
                                 pass
+                        # Make client non-blocking to avoid blocking game loop on send
+                        try:
+                            conn.setblocking(False)
+                        except Exception:
+                            pass
                         self.robot_client_socket = conn
                     print(f"Robot client connected from {addr}")
                     # If there is a pending column (chosen before connection), send it now
@@ -339,10 +344,14 @@ class GameWrapper:
                     if pending is not None and send_conn:
                         try:
                             msg = (str(int(pending))).encode("ascii")
-                            send_conn.sendall(msg)
+                            # Non-blocking send; may raise BlockingIOError if not ready
+                            send_conn.send(msg)
                             print(f"Sent pending column to robot: {pending}")
                         except Exception as e:
                             print(f"Failed to send pending column to robot: {e}")
+                            # Re-queue if send didn't go through
+                            with self.robot_conn_lock:
+                                self.pending_column = pending
 
             self.robot_server_thread = threading.Thread(target=accept_loop, daemon=True)
             self.robot_server_thread.start()
@@ -362,12 +371,14 @@ class GameWrapper:
                 try:
                     self.robot_client_socket.close()
                 except Exception:
+                    print("Failed to close robot client socket")
                     pass
                 self.robot_client_socket = None
         if self.robot_server_socket:
             try:
                 self.robot_server_socket.close()
             except Exception:
+                print("Failed to close robot server socket")
                 pass
             self.robot_server_socket = None
         if self.robot_server_thread and self.robot_server_thread.is_alive():
@@ -377,26 +388,36 @@ class GameWrapper:
         """Send the chosen column to the connected robot client as a string (e.g., "3")."""
         if not self.robot_server_enabled:
             return
+        # Convert to 1-indexed for robot
+        col_to_send = int(col) + 1
+        # Grab current client under lock, but perform send without holding the lock
         with self.robot_conn_lock:
             conn = self.robot_client_socket
-            col = col + 1  # Convert to 1-indexed for robot
-            if not conn:
-                # No client yet; queue the column to send on next connect
-                self.pending_column = int(col)
-                print("No robot client connected; column queued.")
-                return
+        if not conn:
+            # No client yet; queue the column to send on next connect
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
+            print("No robot client connected; column queued.")
+            return
+        msg = (str(col_to_send)).encode("ascii")
+        try:
+            # Non-blocking send of small payload
+            conn.send(msg)
+            print(f"Sent column to robot: {col_to_send}")
+        except (BlockingIOError, TimeoutError):
+            # Try again on next connect or future opportunity
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
+            print("Robot socket not ready; column queued for resend.")
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            print(f"Robot client disconnected while sending column: {e}")
             try:
-                msg = (str(int(col))).encode("ascii")
-                conn.sendall(msg)
-                print(f"Sent column to robot: {col}")
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                print(f"Robot client disconnected while sending column: {e}")
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                # Queue to send on next reconnect
-                self.pending_column = int(col)
+                conn.close()
+            except Exception:
+                pass
+            # Queue to send on next reconnect
+            with self.robot_conn_lock:
+                self.pending_column = col_to_send
                 self.robot_client_socket = None
 
     def bitmasks_to_grid(self, player1_mask: int, player2_mask: int) -> list[list[int]]:
@@ -513,16 +534,16 @@ class GameWrapper:
             self.socket_client.close()
             self.socket_client = None
 
-    def connect_to_robot(self) -> bool:
-        """Connect to the robot TCP server."""
-        try:
-            self.robot_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.robot_socket.connect((self.robot_ip, self.robot_port))
-            print(f"Connected to robot at {self.robot_ip}:{self.robot_port}")
-            return True
-        except Exception as e:
-            print(f"Failed to connect to robot: {e}")
-            return False
+    # def connect_to_robot(self) -> bool:
+    #     """Connect to the robot TCP server."""
+    #     try:
+    #         self.robot_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #         self.robot_socket.connect((self.robot_ip, self.robot_port))
+    #         print(f"Connected to robot at {self.robot_ip}:{self.robot_port}")
+    #         return True
+    #     except Exception as e:
+    #         print(f"Failed to connect to robot: {e}")
+    #         return False
 
     def disconnect_from_robot(self):
         """Disconnect from the robot."""
@@ -533,7 +554,7 @@ class GameWrapper:
     def send_robot_command(self, column: int) -> bool:
         """Send column number to robot via TCP."""
         if not self.robot_socket:
-            if not self.connect_to_robot():
+            # if not self.connect_to_robot():
                 return False
 
         try:
@@ -616,7 +637,7 @@ class GameWrapper:
                     board_chars.append(".")
 
         board_string = "".join(board_chars)
-        print(f"Updated board string for Position: {board_string}")
+        # print(f"Updated board string for Position: {board_string}")
         self.position = Position.from_board_string(board_string)
 
     def find_winning_positions(
@@ -811,7 +832,7 @@ class GameWrapper:
             return
 
         # Connect to robot (optional, will retry if needed)
-        self.connect_to_robot()
+        # self.connect_to_robot()
 
         # Show game GUI
         self.show_game_gui()

@@ -64,6 +64,8 @@ class ConnectFourDetector:
         self.current_depth_m = None  # aligned to color, meters
         self.running = True
         self.frame_lock = threading.Lock()
+        self.frame_width = 640  # Default, will be updated
+        self.frame_height = 480  # Default, will be updated
 
         # GUI elements
         self.window_id = None
@@ -90,6 +92,9 @@ class ConnectFourDetector:
         self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]  # row-major top (0) to bottom (5)
         self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
         self.calib_depth_m = None  # 6x7 matrix from calibration
+        
+        # RealSense camera settings
+        self.realsense_settings = None
 
     def load_calibration(self):
         """Load calibration data from JSON file"""
@@ -117,6 +122,16 @@ class ConnectFourDetector:
             if "depth_m" in self.calibration_data:
                 self.calib_depth_m = self.calibration_data["depth_m"]
 
+            # Load RealSense camera settings if available
+            try:
+                with open("realsense_settings.json", "r") as f:
+                    self.realsense_settings = json.load(f)
+                    print(f"Loaded RealSense settings from realsense_settings.json")
+            except FileNotFoundError:
+                print("No realsense_settings.json found, using default RealSense settings")
+            except json.JSONDecodeError:
+                print("Invalid JSON in realsense_settings.json, using default RealSense settings")
+
             self.detection_threshold = (self.player1_color[1]+self.player2_color[1])/3
 
             return True
@@ -136,14 +151,39 @@ class ConnectFourDetector:
             self.pipeline = rs.pipeline()
             self.config = rs.config()
             # Enable depth+color, align depth to color for per-pixel depth
-            # self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-            # self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
-            self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            # self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+            # self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
             profile = self.pipeline.start(self.config)
+            # Get actual stream dimensions
+            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            self.frame_width = color_profile.width()
+            self.frame_height = color_profile.height()
+            print(f"RealSense resolution: {self.frame_width}x{self.frame_height}")
             # Depth scale
             depth_sensor = profile.get_device().first_depth_sensor()
             self.depth_scale = float(depth_sensor.get_depth_scale())
+            
+            # Apply RealSense settings if loaded
+            if self.realsense_settings:
+                try:
+                    if "auto_exposure" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.enable_auto_exposure, float(self.realsense_settings["auto_exposure"]))
+                    if "visual_preset" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.visual_preset, float(self.realsense_settings["visual_preset"]))
+                    if "exposure" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.exposure, float(self.realsense_settings["exposure"]))
+                    if "gain" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.gain, float(self.realsense_settings["gain"]))
+                    if "laser_power" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.laser_power, float(self.realsense_settings["laser_power"]))
+                    if "emitter_enabled" in self.realsense_settings:
+                        depth_sensor.set_option(rs.option.emitter_enabled, float(self.realsense_settings["emitter_enabled"]))
+                    print("Applied RealSense settings from realsense_settings.json")
+                except Exception as e:
+                    print(f"Warning: Could not apply some RealSense settings: {e}")
+            
             # Align depth to color
             self.align = rs.align(rs.stream.color)
         except Exception as e:
@@ -305,7 +345,6 @@ class ConnectFourDetector:
         # Reset last values
         self.last_g_values = [[0.0 for _ in range(7)] for _ in range(6)]
         self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
-        timer = time.time()
         # Sample each hole position
         for row in range(6):  # 6 rows
             for col in range(7):  # 7 columns
@@ -373,7 +412,7 @@ class ConnectFourDetector:
                         # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
                         
                         # Classify only if depth check passed
-                        if depth_ok and float(avg_bgr[2]) < 250.0 and float(avg_bgr[0]) < 250.0:
+                        if depth_ok and float(avg_bgr[2]) < 250.0 and float(avg_bgr[0]) < 250.0 and float(avg_bgr[1]) < 200.0:
                             threshold = self.detection_threshold
                             bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
                             if avg_g <= threshold:
@@ -381,7 +420,7 @@ class ConnectFourDetector:
                             else:
                                 player2_mask |= 1 << bit_pos  # Green -> player2
 
-        print(elapsed:=time.time()-timer)
+
         return player1_mask, player2_mask
 
     def update_stable_board(self, player1_mask, player2_mask, current_time):
@@ -424,7 +463,7 @@ class ConnectFourDetector:
 
     def update_frame(self):
         """Update the displayed frame in the GUI"""
-        timer = time.time()
+
         with self.frame_lock:
             if self.current_frame is None:
                 return
@@ -438,9 +477,6 @@ class ConnectFourDetector:
         stable_p1, stable_p2, updated = self.update_stable_board(
             player1_mask, player2_mask, current_time
         )
-
-        
-        print(elapsed:=time.time()-timer)
 
         if updated:
             self.player1_bitboard, self.player2_bitboard = stable_p1, stable_p2
@@ -561,21 +597,24 @@ class ConnectFourDetector:
     def create_gui(self):
         """Create the Dear PyGui interface"""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four Detection", width=2200, height=1200)
+        # Adjust viewport size based on frame dimensions
+        viewport_width = self.frame_width + 300  # Extra space for controls
+        viewport_height = max(self.frame_height + 40, 600)  # At least 600 for controls
+        dpg.create_viewport(title="Connect Four Detection", width=viewport_width, height=viewport_height)
 
-        with dpg.window(label="Detection", width=2200, height=1200) as self.window_id:
+        with dpg.window(label="Detection", width=viewport_width, height=viewport_height) as self.window_id:
             with dpg.group(horizontal=True):
                 # Left side - Image display
-                with dpg.child_window(width=1920, height=1100):
+                with dpg.child_window(width=self.frame_width, height=self.frame_height + 20):
                     dpg.add_text("RealSense Feed - Real-time Detection")
                     with dpg.texture_registry():
                         self.texture_id = dpg.add_raw_texture(
-                            1920,
-                            1080,
-                            np.zeros((1920 * 1080 * 3,), dtype=np.float32),
+                            self.frame_width,
+                            self.frame_height,
+                            np.zeros((self.frame_width * self.frame_height * 3,), dtype=np.float32),
                             format=dpg.mvFormat_Float_rgb,
                         )
-                    dpg.add_image(self.texture_id, width=1920, height=1080)
+                    dpg.add_image(self.texture_id, width=self.frame_width, height=self.frame_height)
 
                 # Right side - Bitboard display
                 with dpg.child_window(width=280, height=600):
