@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Four Web UI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='images/connect-four-icon.svg') }}" alt="Connect Four Icon" class="icon">
+        <h1>Schlag den Roboter: Vier Gewinnt</h1>
+        <img src="{{ url_for('static', filename='images/connect-four-icon.svg') }}" alt="Connect Four Icon" class="icon">
+    </header>
+    <div class="player-indicators">
+        <div id="player1-indicator" class="player-indicator active">
+            <div class="player-rectangle"></div>
+            <span>Player 1</span>
+        </div>
+        <div id="game-board">
+            {% for row in range(6) %}
+            <div class="row">
+                {% for col in range(7) %}
+                <div class="cell" data-row="{{ row }}" data-col="{{ col }}"></div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+            <!-- Invisible column overlays for clicking -->
+            {% for col in range(7) %}
+            <div class="column-overlay" data-col="{{ col }}"></div>
+            {% endfor %}
+        </div>
+        <div id="player2-indicator" class="player-indicator inactive">
+            <div class="player-rectangle"></div>
+            <span>Player 2</span>
+        </div>
+    </div>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

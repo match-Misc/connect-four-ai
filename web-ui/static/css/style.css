@@ -1,0 +1,177 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f4f4f4;
+    height: 100vh;
+    width: 100vw;
+    box-sizing: border-box;
+}
+
+header {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    background-color: #ccc;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    z-index: 10;
+    border-radius: 10px;
+}
+
+.icon {
+    width: 40px;
+    height: 40px;
+    margin: 0 10px;
+}
+
+h1 {
+    color: #333;
+    text-align: center;
+    margin: 0;
+    flex-grow: 1;
+}
+
+p {
+    color: #666;
+    text-align: center;
+    max-width: 80%;
+    margin: 0 auto;
+    padding-top: 120px; /* Space for fixed header */
+}
+
+.player-indicators {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 100px auto 20px auto;
+    gap: 20px;
+}
+
+#game-board {
+    background-color: #ccc;
+    border-radius: 10px;
+    padding: 20px;
+    width: fit-content;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    position: relative;
+}
+
+.player-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.player-rectangle {
+    width: 60px;
+    height: 360px;
+    border-radius: 10px;
+    transition: opacity 0.3s, background-color 0.3s;
+}
+
+.player-indicator.active .player-rectangle {
+    opacity: 1;
+}
+
+.player-indicator.inactive .player-rectangle {
+    opacity: 0.5;
+}
+
+.player-indicator.active {
+    transform: scale(1.05);
+    transition: transform 0.3s;
+}
+
+.player-indicator.inactive {
+    transform: scale(0.95);
+    transition: transform 0.3s;
+}
+
+.player-indicator span {
+    font-size: 18px;
+    font-weight: bold;
+    color: #333;
+}
+
+#player1-indicator .player-rectangle {
+    background-color: #B1CA21;
+}
+
+#player2-indicator .player-rectangle {
+    background-color: #6B7280;
+}
+
+/* Ensure proper styling for player 2 active state */
+#player2-indicator.active .player-rectangle {
+    background-color: #1F2937 !important;
+}
+
+#player2-indicator.inactive .player-rectangle {
+    background-color: #6B7280 !important;
+}
+
+.row {
+    display: flex;
+}
+
+.cell {
+    width: 50px;
+    height: 50px;
+    background-color: white;
+    border-radius: 50%;
+    margin: 5px;
+    border: 2px solid #999;
+    transition: background-color 0.3s;
+}
+
+.cell.player1 {
+    background-color: #B1CA21; /* Green for player 1 */
+}
+
+.cell.player2 {
+    background-color: #374151; /* Black for player 2 */
+}
+
+.column-overlay {
+    position: absolute;
+    top: 20px; /* Align with cells */
+    width: 55px;
+    height: 360px; /* Full board height */
+    cursor: pointer;
+    opacity: 0; /* Invisible */
+}
+
+.column-overlay:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    opacity: 1;
+}
+
+.column-overlay:nth-child(7) { left: 22.5px; } /* Column 0 */
+.column-overlay:nth-child(8) { left: 82.5px; } /* Column 1 */
+.column-overlay:nth-child(9) { left: 142.5px; } /* Column 2 */
+.column-overlay:nth-child(10) { left: 202.5px; } /* Column 3 */
+.column-overlay:nth-child(11) { left: 262.5px; } /* Column 4 */
+.column-overlay:nth-child(12) { left: 322.5px; } /* Column 5 */
+.column-overlay:nth-child(13) { left: 382.5px; } /* Column 6 */
+
+.falling-chip {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    z-index: 10;
+}
+
+.falling-chip.player1 {
+    background-color: #B1CA21;
+}
+
+.falling-chip.player2 {
+    background-color: #374151;
+}
