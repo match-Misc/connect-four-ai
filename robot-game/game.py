@@ -62,10 +62,10 @@ class Board:
         "board": (55, 65, 81),
         "empty": (31, 41, 55),
         "empty-outline": (28, 38, 53),
-        "player1": (220, 38, 38),
-        "player1-outline": (153, 27, 27),
-        "player2": (251, 192, 36),
-        "player2-outline": (245, 158, 11),
+        "player1": (177, 202, 33),  # Green
+        "player1-outline": (122, 139, 23),
+        "player2": (55, 65, 81),  # Black/Gray
+        "player2-outline": (31, 41, 55),
         "preview": (128, 128, 128),
         "preview-outline": (100, 100, 100),
         "hint-text": (156, 163, 175),  # gray-400
