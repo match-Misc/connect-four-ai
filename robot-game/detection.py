@@ -93,6 +93,11 @@ class ConnectFourDetector:
         self.last_depth_values = [[None for _ in range(7)] for _ in range(6)]
         self.calib_depth_m = None  # 6x7 matrix from calibration
         
+        # RGB max value thresholds for detection
+        self.max_r_value = 250.0
+        self.max_b_value = 250.0
+        self.max_g_value = 200.0
+        
         # RealSense camera settings
         self.realsense_settings = None
 
@@ -412,7 +417,7 @@ class ConnectFourDetector:
                         # If no calibration depth or no measured depth, treat as not ok (cannot be successful)
                         
                         # Classify only if depth check passed
-                        if depth_ok and float(avg_bgr[2]) < 250.0 and float(avg_bgr[0]) < 250.0 and float(avg_bgr[1]) < 200.0:
+                        if depth_ok and float(avg_bgr[2]) < self.max_r_value and float(avg_bgr[0]) < self.max_b_value and float(avg_bgr[1]) < self.max_g_value:
                             threshold = self.detection_threshold
                             bit_pos = (5 - row) * 7 + col  # bottom-left is bit 0
                             if avg_g <= threshold:
@@ -632,6 +637,29 @@ class ConnectFourDetector:
                         min_value=5.0,
                         max_value=100.0,
                         callback=lambda s, a: setattr(self, "detection_threshold", a),
+                    )
+                    dpg.add_separator()
+                    dpg.add_text("RGB Max Values (above = invalid)")
+                    dpg.add_slider_float(
+                        label="Max R",
+                        default_value=self.max_r_value,
+                        min_value=0.0,
+                        max_value=255.0,
+                        callback=lambda s, a: setattr(self, "max_r_value", a),
+                    )
+                    dpg.add_slider_float(
+                        label="Max G",
+                        default_value=self.max_g_value,
+                        min_value=0.0,
+                        max_value=255.0,
+                        callback=lambda s, a: setattr(self, "max_g_value", a),
+                    )
+                    dpg.add_slider_float(
+                        label="Max B",
+                        default_value=self.max_b_value,
+                        min_value=0.0,
+                        max_value=255.0,
+                        callback=lambda s, a: setattr(self, "max_b_value", a),
                     )
 
         dpg.setup_dearpygui()

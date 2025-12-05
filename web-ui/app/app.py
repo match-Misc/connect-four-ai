@@ -47,33 +47,57 @@ def bitmasks_to_grid(player1_mask, player2_mask):
         for col in range(7):
             bit_pos = (5 - row) * 7 + col
             if player1_mask & (1 << bit_pos):
-                grid[row][col] = 1  # Player 1 (red)
+                grid[row][col] = 2  # Player 1 (red)
             elif player2_mask & (1 << bit_pos):
-                grid[row][col] = 2  # Player 2 (yellow)
+                grid[row][col] = 1  # Player 2 (yellow)
     return grid
 
 def detection_poller():
+    print("Detection poller started")
     while True:
-        current_p1, current_p2 = get_current_bitmasks()
-        grid = bitmasks_to_grid(current_p1, current_p2)
-        socketio.emit('board_update', {'grid': grid})
-        time.sleep(0.5)  # Poll every 500ms
+        try:
+            current_p1, current_p2 = get_current_bitmasks()
+            grid = bitmasks_to_grid(current_p1, current_p2)
+            
+            # Count pieces in grid
+            piece_count = sum(sum(1 for cell in row if cell != 0) for row in grid)
+            
+            # Log every 10th update to avoid spam
+            if not hasattr(detection_poller, 'counter'):
+                detection_poller.counter = 0
+            detection_poller.counter += 1
+            if detection_poller.counter % 10 == 0:
+                print(f"Polling update #{detection_poller.counter}: p1={current_p1}, p2={current_p2}, pieces={piece_count}")
+                if piece_count > 0:
+                    print(f"  Grid sample (row 5): {grid[5]}")
+                    print(f"  Emitting to clients: {grid}")
+            
+            socketio.emit('board_update', {'grid': grid})
+            socketio.sleep(0.5)  # Poll every 500ms
+        except Exception as e:
+            print(f"Error in detection poller: {e}")
+            socketio.sleep(1)
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/test')
+def test():
+    return render_template('test.html')
+
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
+    print('Client connected to web-ui')
     # Send initial board state
     current_p1, current_p2 = get_current_bitmasks()
     grid = bitmasks_to_grid(current_p1, current_p2)
+    print(f"Sending initial board state: p1={current_p1}, p2={current_p2}")
+    print(f"Grid: {grid}")
     emit('board_update', {'grid': grid})
 
 if __name__ == '__main__':
     # Start detection poller in background
-    poller_thread = threading.Thread(target=detection_poller, daemon=True)
-    poller_thread.start()
+    socketio.start_background_task(detection_poller)
     
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
