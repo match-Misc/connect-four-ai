@@ -16,9 +16,9 @@ def save_settings_callback(exp, gain, laser, preset, min_d, max_d, emitter):
         "emitter_enabled": emitter,
         "auto_exposure": 0
     }
-    with open("config/calibrate_realsense.json", "w") as f:
+    with open("../config/calibrate_realsense.json", "w") as f:
         json.dump(settings, f, indent=4)
-    print("Settings saved to config/calibrate_realsense.json")
+    print("Settings saved to ../config/calibrate_realsense.json")
     print(json.dumps(settings, indent=2))
 
 

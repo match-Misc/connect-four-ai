@@ -44,6 +44,11 @@ class ConnectFourCalibrator:
         self.saturation = 100  # 0-200, 100=1.0
         self.brightness = 0  # -100 to 100
 
+        # Max RGB values
+        self.max_r = 255
+        self.max_g = 255
+        self.max_b = 255
+
         # RealSense pipeline and threading
         self.pipeline = None
         self.config = None
@@ -65,7 +70,7 @@ class ConnectFourCalibrator:
         self.player1_legend_id = None
         self.player2_legend_id = None
 
-    def load_last_calibration(self, filename="config/calibration.json"):
+    def load_last_calibration(self, filename="../config/calibration.json"):
         """Load previous calibration from JSON if available and prefill fields.
 
         Fields loaded:
@@ -109,6 +114,11 @@ class ConnectFourCalibrator:
                 self.player1_color = [int(v) for v in p1]
                 self.player2_color = [int(v) for v in p2]
                 self.calibration_complete = True
+
+            # Max RGB (optional)
+            self.max_r = int(data.get("max_r", self.max_r))
+            self.max_g = int(data.get("max_g", self.max_g))
+            self.max_b = int(data.get("max_b", self.max_b))
 
             self.status_text = "Loaded previous calibration. Adjust or save as needed."
             return True
@@ -455,7 +465,7 @@ class ConnectFourCalibrator:
 
         return False
 
-    def save_calibration(self, filename="config/calibration.json"):
+    def save_calibration(self, filename="../config/calibration.json"):
         """Save calibration data to JSON file"""
         if not self.calibration_complete:
             self.status_text = (
@@ -481,6 +491,9 @@ class ConnectFourCalibrator:
             "contrast": self.contrast,
             "saturation": self.saturation,
             "brightness": self.brightness,
+            "max_r": self.max_r,
+            "max_g": self.max_g,
+            "max_b": self.max_b,
         }
 
         # Capture and include depth map (meters) for all 42 positions
@@ -497,7 +510,33 @@ class ConnectFourCalibrator:
             self.status_text = f"Error saving calibration: {e}"
             return False
 
-    def save_grid_only(self, filename="config/calibration.json"):
+    def save_max_rgb(self, filename="config/calibration.json"):
+        """Save only max RGB values to the JSON file"""
+        if not os.path.exists(filename):
+            self.status_text = (
+                f"Error: {filename} does not exist. Please save full calibration first."
+            )
+            return False
+
+        try:
+            # Load existing calibration
+            with open(filename, "r") as f:
+                data = json.load(f)
+
+            # Update max RGB
+            data["max_r"] = self.max_r
+            data["max_g"] = self.max_g
+            data["max_b"] = self.max_b
+
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+            self.status_text = f"Max RGB saved to {filename}"
+            return True
+        except Exception as e:
+            self.status_text = f"Error saving max RGB: {e}"
+            return False
+
+    def save_grid_only(self, filename="../config/calibration.json"):
         """Save only grid calibration data, updating existing config/calibration.json"""
         if len(self.corners) != 4:
             self.status_text = "Please define all 4 corners first."
@@ -600,36 +639,78 @@ class ConnectFourCalibrator:
                 # Right side - Controls
                 with dpg.child_window(width=380, height=600):
                     dpg.add_text("Hole Parameters")
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Diameter",
                         default_value=self.hole_diameter,
                         min_value=10,
                         max_value=200,
                         callback=lambda s, a: setattr(self, "hole_diameter", a),
                     )
+                    dpg.add_input_int(
+                        label="Horizontal Spacing",
+                        default_value=self.h_spacing,
+                        min_value=10,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "h_spacing", a),
+                    )
+                    dpg.add_input_int(
+                        label="Vertical Spacing",
+                        default_value=self.v_spacing,
+                        min_value=10,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "v_spacing", a),
+                    )
 
                     dpg.add_separator()
                     dpg.add_text("Image Adjustments")
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Contrast",
                         default_value=self.contrast,
                         min_value=0,
                         max_value=200,
                         callback=lambda s, a: setattr(self, "contrast", a),
                     )
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Saturation",
                         default_value=self.saturation,
                         min_value=0,
                         max_value=200,
                         callback=lambda s, a: setattr(self, "saturation", a),
                     )
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Brightness",
-                        default_value=self.brightness + 100,
+                        default_value=self.brightness,
+                        min_value=-100,
+                        max_value=100,
+                        callback=lambda s, a: setattr(self, "brightness", a),
+                    )
+
+                    dpg.add_separator()
+                    dpg.add_text("Max RGB Values")
+                    dpg.add_input_int(
+                        label="Max R",
+                        default_value=self.max_r,
                         min_value=0,
-                        max_value=200,
-                        callback=lambda s, a: setattr(self, "brightness", a - 100),
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_r", a),
+                    )
+                    dpg.add_input_int(
+                        label="Max G",
+                        default_value=self.max_g,
+                        min_value=0,
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_g", a),
+                    )
+                    dpg.add_input_int(
+                        label="Max B",
+                        default_value=self.max_b,
+                        min_value=0,
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_b", a),
+                    )
+                    dpg.add_button(
+                        label="Save Max RGB",
+                        callback=self.save_max_rgb_callback,
                     )
 
                     dpg.add_separator()
@@ -702,6 +783,10 @@ class ConnectFourCalibrator:
     def save_grid_only_callback(self, sender, app_data, user_data):
         """Callback for save grid only button"""
         self.save_grid_only()
+
+    def save_max_rgb_callback(self, sender, app_data, user_data):
+        """Callback for save max RGB button"""
+        self.save_max_rgb()
 
     def reset_corners_callback(self, sender, app_data, user_data):
         """Callback for reset corners button"""
