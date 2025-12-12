@@ -65,7 +65,7 @@ class ConnectFourCalibrator:
         self.player1_legend_id = None
         self.player2_legend_id = None
 
-    def load_last_calibration(self, filename="calibration.json"):
+    def load_last_calibration(self, filename="config/calibration.json"):
         """Load previous calibration from JSON if available and prefill fields.
 
         Fields loaded:
@@ -455,7 +455,7 @@ class ConnectFourCalibrator:
 
         return False
 
-    def save_calibration(self, filename="calibration.json"):
+    def save_calibration(self, filename="config/calibration.json"):
         """Save calibration data to JSON file"""
         if not self.calibration_complete:
             self.status_text = (
@@ -497,8 +497,8 @@ class ConnectFourCalibrator:
             self.status_text = f"Error saving calibration: {e}"
             return False
 
-    def save_grid_only(self, filename="calibration.json"):
-        """Save only grid calibration data, updating existing calibration.json"""
+    def save_grid_only(self, filename="config/calibration.json"):
+        """Save only grid calibration data, updating existing config/calibration.json"""
         if len(self.corners) != 4:
             self.status_text = "Please define all 4 corners first."
             return False
