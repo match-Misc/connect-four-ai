@@ -147,7 +147,8 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-72 bg-white border-r border-slate-200 flex flex-col z-10 shadow-lg relative">
         <div className="absolute inset-0 bg-gradient-to-b from-slate-100/50 to-transparent pointer-events-none" />
-        <div className="p-8">
+        <div className="p-8 pt-10">
+          <img src="/favicon.svg" alt="Match Logo" className="w-full h-auto mb-6" />
           <h1 className="text-2xl font-bold text-slate-800 tracking-tight flex items-center gap-3">
             <Monitor className="w-7 h-7 text-[#b1ca21]" />
             Calibrate
