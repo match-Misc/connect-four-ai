@@ -23,4 +23,6 @@ calibration.json
 
 # AI Code Prep
 .aicodeprep-gui
-fullcode.txt
+fullcode.txt# pixi environments
+.pixi/*
+!.pixi/config.toml

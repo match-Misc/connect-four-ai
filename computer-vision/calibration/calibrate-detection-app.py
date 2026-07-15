@@ -176,7 +176,7 @@ class ConnectFourCalibrator:
             if self.current_frame is None:
                 return None
             frame = self.current_frame.copy()
-        self.draw_corners(frame)nly
+        self.draw_corners(frame)
         if len(self.corners) == 4:
             frame = self.draw_hole_grid(frame)
         return frame
@@ -186,17 +186,17 @@ class ConnectFourCalibrator:
             self.corners.append((int(x), int(y)))
             self.status_text = f"Corner {len(self.corners)} set at ({int(x)}, {int(y)})"
             if len(self.corners) == 4:
-                # Sort corners
-                top_left = min(self.corners, key=lambda p: p[0] + p[1])
-                bottom_right = max(self.corners, key=lambda p: p[0] + p[1])
-                remaining = [p for p in self.corners if p not in [top_left, bottom_right]]
-                if remaining[0][1] < remaining[1][1]:
-                    top_right = remaining[0]
-                    bottom_left = remaining[1]
-                else:
-                    top_right = remaining[1]
-                    bottom_left = remaining[0]
-                self.corners = [top_left, top_right, bottom_left, bottom_right]
+                # Sort corners robustly based on x and y coordinates
+                sorted_by_x = sorted(self.corners, key=lambda p: p[0])
+                left_corners = sorted(sorted_by_x[:2], key=lambda p: p[1])
+                right_corners = sorted(sorted_by_x[2:], key=lambda p: p[1])
+                
+                self.corners = [
+                    left_corners[0],   # top-left
+                    right_corners[0],  # top-right
+                    left_corners[1],   # bottom-left
+                    right_corners[1]   # bottom-right
+                ]
                 self.status_text = "All corners defined. Adjust parameters and calibrate colors."
 
     def update_params(self, params):
@@ -278,6 +278,58 @@ class ConnectFourCalibrator:
         self.corners = []
         self.calibration_complete = False
         self.status_text = "Corners reset."
+
+    def save_grid_only(self):
+        if len(self.corners) != 4:
+            self.status_text = "Define all 4 corners first."
+            return False
+        
+        corner_dict = {"top_left": self.corners[0], "top_right": self.corners[1], "bottom_left": self.corners[2], "bottom_right": self.corners[3]}
+        
+        data = {}
+        if os.path.exists("../config/calibration.json"):
+            with open("../config/calibration.json", "r") as f:
+                try:
+                    data = json.load(f)
+                except:
+                    pass
+                    
+        data["corners"] = corner_dict
+        data["horizontal_spacing"] = self.h_spacing
+        data["vertical_spacing"] = self.v_spacing
+        
+        try:
+            os.makedirs("../config", exist_ok=True)
+            with open("../config/calibration.json", "w") as f:
+                json.dump(data, f, indent=2)
+            self.status_text = "Grid configuration saved."
+            return True
+        except Exception as e:
+            self.status_text = f"Save failed: {e}"
+            return False
+
+    def save_max_rgb(self):
+        data = {}
+        if os.path.exists("../config/calibration.json"):
+            with open("../config/calibration.json", "r") as f:
+                try:
+                    data = json.load(f)
+                except:
+                    pass
+                    
+        data["max_r"] = self.max_r
+        data["max_g"] = self.max_g
+        data["max_b"] = self.max_b
+        
+        try:
+            os.makedirs("../config", exist_ok=True)
+            with open("../config/calibration.json", "w") as f:
+                json.dump(data, f, indent=2)
+            self.status_text = "Max RGB settings saved."
+            return True
+        except Exception as e:
+            self.status_text = f"Save failed: {e}"
+            return False
 
 calibrator = ConnectFourCalibrator()
 
