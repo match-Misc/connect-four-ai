@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [tasks]
 calibrate = "python computer-vision/calibration/calibration_server.py"
+build-frontend = "cd computer-vision/calibration/frontend && npm install && npm run build"
 
 [dependencies]
 python = ">=3.14.6,<3.15"
