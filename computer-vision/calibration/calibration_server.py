@@ -7,6 +7,13 @@ import time
 import pyrealsense2 as rs
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
+import moondream as md
+from PIL import Image
+import io
+import base64
+# Moondream models will be initialized on-demand per request based on the selected mode.
+moondream_local = None
+moondream_cloud = None
 
 app = Flask(__name__, static_folder="frontend/dist", static_url_path="/static")
 CORS(app)
@@ -301,6 +308,12 @@ class UnifiedCalibrator:
         if len(self.corners) == 4:
             frame = self.draw_hole_grid(frame)
         return frame
+
+    def get_raw_color_frame_image(self):
+        with self.frame_lock:
+            if self.current_color_frame is None:
+                return None
+            return self.current_color_frame.copy()
 
     def get_depth_frame_image(self):
         with self.frame_lock:
@@ -653,6 +666,8 @@ def generate_frames(stream_type):
     while True:
         if stream_type == 'color':
             img = calibrator.get_color_frame_image()
+        elif stream_type == 'raw':
+            img = calibrator.get_raw_color_frame_image()
         else:
             img = calibrator.get_depth_frame_image()
             
@@ -669,6 +684,10 @@ def generate_frames(stream_type):
 @app.route('/frame/color')
 def frame_color():
     return Response(generate_frames('color'), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/frame/raw')
+def frame_raw():
+    return Response(generate_frames('raw'), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/frame/depth')
 def frame_depth():
@@ -790,6 +809,118 @@ def catch_all(path):
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, 'index.html')
+
+class LocalMoondream:
+    def __init__(self):
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        print("Loading local Moondream model via transformers...")
+        self.model = AutoModelForCausalLM.from_pretrained("vikhyatk/moondream2", revision="2025-01-09", trust_remote_code=True).to("cpu")
+        print("Local Moondream model loaded.")
+        
+    def detect(self, image, target):
+        print(f"Running detection for '{target}'...")
+        try:
+            # Resize image to max 640x640 to match the UI resolution and drastically speed up CPU inference
+            # The bounding boxes are normalized [0, 1] so this won't break coordinates
+            img_copy = image.copy()
+            img_copy.thumbnail((640, 640))
+            
+            results = self.model.detect(img_copy, target)
+            print(f"RAW MOONDREAM OUTPUT for '{target}': {results}")
+            
+            boxes = []
+            if results and "objects" in results:
+                for obj in results["objects"]:
+                    boxes.append([
+                        obj.get('x_min', 0), 
+                        obj.get('y_min', 0), 
+                        obj.get('x_max', 0), 
+                        obj.get('y_max', 0)
+                    ])
+            return boxes
+        except Exception as e:
+            print(f"Detect error: {e}")
+            return []
+
+@app.route('/api/moondream/detect', methods=['POST'])
+def moondream_detect():
+    global moondream_local, moondream_cloud
+    print("==================================================")
+    print("SINGLE SHOT REQUEST RECEIVED!")
+    print("==================================================")
+    try:
+        data = request.json
+        image_data = data.get('image')
+        targets = data.get('targets', ['green chip', 'black chip'])
+        mode = data.get('mode', 'cloud')
+        api_key = data.get('api_key', '')
+        
+        if not image_data:
+            return jsonify({"error": "No image provided"}), 400
+            
+        # Select and initialize the correct model
+        try:
+            if mode == 'local':
+                if not moondream_local:
+                    print("--> Initializing Local Moondream 2025-01-09...")
+                    print("--> Note: This may take several minutes if it is downloading the weights for the first time!")
+                    moondream_local = LocalMoondream()
+                active_model = moondream_local
+            else:
+                # Always create a new cloud client if the API key changes or isn't cached
+                active_model = md.vl(api_key=api_key)
+        except Exception as e:
+            return jsonify({"error": f"Failed to initialize {mode} model: {str(e)}"}), 500
+
+        start_time = time.time()
+        
+        # Decode base64 image
+        if image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+            
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        prep_time = (time.time() - start_time) * 1000
+        
+        results = {}
+        call_times = {}
+        
+        for target in targets:
+            step_start = time.time()
+            detections = active_model.detect(image, target)
+            
+            # Extract coordinates
+            boxes = []
+            if detections and hasattr(detections, 'objects'):
+                for obj in detections.objects:
+                    boxes.append([obj.x_min, obj.y_min, obj.x_max, obj.y_max])
+            elif detections and isinstance(detections, dict) and 'objects' in detections:
+                for obj in detections['objects']:
+                    boxes.append([obj['x_min'], obj['y_min'], obj['x_max'], obj['y_max']])
+            elif isinstance(detections, list):
+                for obj in detections:
+                    if isinstance(obj, dict):
+                        boxes.append([obj.get('x_min'), obj.get('y_min'), obj.get('x_max'), obj.get('y_max')])
+                    else:
+                        boxes.append([obj.x_min, obj.y_min, obj.x_max, obj.y_max])
+                        
+            results[target] = boxes
+            call_times[target] = (time.time() - step_start) * 1000
+            
+        total_latency = (time.time() - start_time) * 1000
+        
+        return jsonify({
+            "detections": results,
+            "latency": {
+                "total": total_latency,
+                "prep": prep_time,
+                "calls": call_times
+            }
+        })
+    except Exception as e:
+        print(f"Moondream error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     if calibrator.start_webcam():

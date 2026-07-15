@@ -5,8 +5,8 @@ import { Button } from './components/ui/button'
 import { Slider } from './components/ui/slider'
 import { Label } from './components/ui/label'
 import { Input } from './components/ui/input'
-import { Camera, Settings, Monitor, RefreshCw, Save, CheckCircle2 } from 'lucide-react'
-
+import { Camera, Settings, Monitor, RefreshCw, Save, CheckCircle2, ScanFace } from 'lucide-react'
+import MoondreamView from './components/MoondreamView'
 function SliderWithInput({ label, value, min = 0, max = 100, step = 1, onChange }: { label: string, value: number, min?: number, max?: number, step?: number, onChange: (v: number) => void }) {
   return (
     <div className="space-y-4 p-5 bg-white rounded-xl border border-slate-200 hover:border-[#b1ca21]/50 hover:bg-slate-50 transition-all duration-300 shadow-sm">
@@ -42,7 +42,7 @@ export default function App() {
   const [status, setStatus] = useState<any>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const depthRef = useRef<HTMLImageElement>(null)
-  const activeTab = location.pathname.includes('realsense') ? 'realsense' : 'detection'
+  const activeTab = location.pathname.includes('realsense') ? 'realsense' : (location.pathname.includes('moondream') ? 'moondream' : 'detection')
   const [realsenseSubTab, setRealsenseSubTab] = useState<'sensor' | 'filtering'>('sensor')
   const [measuredDepth, setMeasuredDepth] = useState<number | null>(null)
   const [advancedSettings, setAdvancedSettings] = useState({
@@ -171,10 +171,19 @@ export default function App() {
             <Settings className={`w-5 h-5 ${activeTab === 'realsense' ? 'text-[#b1ca21]' : 'text-slate-400 group-hover:text-slate-600'}`} />
             RealSense Calibration
           </button>
+          
+          <button 
+            onClick={() => navigate('/moondream')}
+            className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 group ${activeTab === 'moondream' ? 'bg-[#b1ca21]/10 text-[#8a9e19] border border-[#b1ca21]/20 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-transparent'}`}
+          >
+            <ScanFace className={`w-5 h-5 ${activeTab === 'moondream' ? 'text-[#b1ca21]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            Moondream AI
+          </button>
         </nav>
         
         <Routes>
           <Route path="/" element={<Navigate to="/detection-config" replace />} />
+          <Route path="/moondream" element={null} />
           <Route path="*" element={null} />
         </Routes>
 
@@ -676,9 +685,13 @@ export default function App() {
                   <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save RealSense Profile
                 </Button>
               </div>
-
             </div>
           )}
+
+          {activeTab === 'moondream' && (
+            <MoondreamView />
+          )}
+
         </div>
       </main>
     </div>
