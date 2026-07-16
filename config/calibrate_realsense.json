@@ -1,0 +1,10 @@
+{
+    "exposure": 1000,
+    "gain": 16,
+    "laser_power": 150,
+    "visual_preset": 0,
+    "min_depth_mm": 410,
+    "max_depth_mm": 450,
+    "emitter_enabled": 1,
+    "auto_exposure": 0
+}

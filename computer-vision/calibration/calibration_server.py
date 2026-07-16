@@ -68,7 +68,7 @@ class UnifiedCalibrator:
         self.load_realsense_calibration()
 
     def load_detection_calibration(self):
-        filename = "../config/calibration.json"
+        filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../config/calibration.json")
         try:
             if os.path.exists(filename):
                 with open(filename, "r") as f:
@@ -103,7 +103,7 @@ class UnifiedCalibrator:
             print(f"Failed to load detection calibration: {e}")
 
     def load_realsense_calibration(self):
-        filename = "../config/calibrate_realsense.json"
+        filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../config/calibrate_realsense.json")
         try:
             if os.path.exists(filename):
                 with open(filename, "r") as f:
@@ -587,7 +587,9 @@ class UnifiedCalibrator:
             "max_b": self.max_b
         }
         try:
-            with open("../config/calibration.json", "w") as f:
+            filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../config/calibration.json")
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
             self.status_text = "Calibration saved."
             return True
@@ -606,9 +608,14 @@ class UnifiedCalibrator:
             "emitter_enabled": self.emitter,
             "auto_exposure": 0
         }
-        with open("../config/calibrate_realsense.json", "w") as f:
-            json.dump(settings, f, indent=4)
-        self.status_text = "RealSense settings saved"
+        try:
+            filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../config/calibrate_realsense.json")
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            with open(filename, "w") as f:
+                json.dump(settings, f, indent=4)
+            self.status_text = "RealSense settings saved"
+        except Exception as e:
+            self.status_text = f"Save failed: {e}"
 
     def reset_corners(self):
         self.corners = []
