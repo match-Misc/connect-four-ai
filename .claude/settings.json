@@ -14,7 +14,11 @@
       "Bash(ss -ltnp 2>/dev/null | grep -E ':8000|:5173' || echo \"ports free\" *)",
       "Read(//var/crash/**)",
       "Bash(ls -la --time-style=full-iso /var/crash/ 2>/dev/null *)",
-      "Bash(kill -KILL 35040)"
+      "Bash(kill -KILL 35040)",
+      "Bash(timeout 60 python3 /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/c047223d-b7fd-4d50-8aca-a3aaeaeb1fad/scratchpad/t.py)",
+      "Bash(sed -i 's|sys.path.insert\\(0, \".\"\\)|sys.path.insert\\(0, \"/home/match-vier-gewinnt/connect-four-ai/robot-game/backend\"\\)|' /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/c047223d-b7fd-4d50-8aca-a3aaeaeb1fad/scratchpad/t2.py)",
+      "Bash(timeout 120 pixi run python /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/c047223d-b7fd-4d50-8aca-a3aaeaeb1fad/scratchpad/t2.py)",
+      "Bash(grep -viE \"pixi task|^ *$\")"
     ]
   }
 }

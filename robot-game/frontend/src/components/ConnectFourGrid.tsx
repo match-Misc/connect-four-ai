@@ -10,7 +10,7 @@ interface ConnectFourGridProps {
 
 export function ConnectFourGrid({ board, onColumnClick, disabled, invalidStones = [], robotTargetCol = null }: ConnectFourGridProps) {
   return (
-    <div className="relative bg-gray-700 p-2 sm:p-4 rounded-2xl shadow-xl border-4 border-gray-800 w-full h-full">
+    <div className="relative bg-gray-700 dark:bg-gray-800 p-2 sm:p-4 rounded-2xl shadow-xl border-4 border-gray-800 dark:border-gray-700 w-full h-full">
       <div className="grid grid-cols-7 grid-rows-6 gap-2 sm:gap-3 w-full h-full">
         {board.map((row, rowIndex) => 
           row.map((cell, colIndex) => {
@@ -20,7 +20,7 @@ export function ConnectFourGrid({ board, onColumnClick, disabled, invalidStones 
             <div 
               key={`${rowIndex}-${colIndex}`} 
               className={cn("w-full h-full rounded-full flex items-center justify-center cursor-pointer transition-transform hover:scale-[1.03]",
-                isInvalid ? "bg-red-900/50 animate-pulse" : "bg-gray-800"
+                isInvalid ? "bg-red-900/50 animate-pulse" : "bg-gray-800 dark:bg-gray-900"
               )}
               onClick={() => {
                 if (!disabled) {
@@ -30,9 +30,9 @@ export function ConnectFourGrid({ board, onColumnClick, disabled, invalidStones 
             >
               <div className={cn(
                 "w-[85%] h-[85%] rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)] transition-all duration-300",
-                cell === 0 ? "bg-white border-2 border-gray-200" : 
-                cell === 1 ? "bg-brand-green border-2 border-[#8C9E17]" : 
-                "bg-gray-900 border-2 border-black",
+                cell === 0 ? "bg-white border-2 border-gray-200 dark:bg-gray-700 dark:border-gray-600" :
+                cell === 1 ? "bg-brand-green border-2 border-[#8C9E17]" :
+                "bg-gray-900 border-2 border-black dark:bg-black dark:border-gray-800",
                 isInvalid && "ring-4 ring-red-500 shadow-[0_0_15px_rgba(239,68,68,0.8)]"
               )} />
             </div>

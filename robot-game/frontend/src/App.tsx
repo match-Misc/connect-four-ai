@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { cn } from './utils';
 import { ConnectFourGrid } from './components/ConnectFourGrid';
+import { ThemeToggle } from './components/ThemeToggle';
 import { Activity, Bot, User, Settings2, Bug, Gamepad2 } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
@@ -14,7 +15,6 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [difficulty, setDifficulty] = useState<string>('medium');
   const [gameOver, setGameOver] = useState<boolean>(false);
   const [winner, setWinner] = useState<number | null>(null);
-  const [matchState, setMatchState] = useState<string>('in_game');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [invalidStones, setInvalidStones] = useState<number[][]>([]);
   const [debounceTime, setDebounceTime] = useState<number>(0.5);
@@ -34,7 +34,6 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       setSimulationMode(data.simulation_mode);
       setGameOver(data.game_over || false);
       setWinner(data.winner || null);
-      setMatchState(data.match_state || 'in_game');
       setErrorMsg(data.error_msg || null);
       setInvalidStones(data.invalid_stones || []);
       if (data.debounce_time !== undefined) {
@@ -107,36 +106,37 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   }, [simulationMode, difficulty, debounceTime, aiEnabled]);
 
   return (
-    <div className={cn("bg-gray-50 flex flex-col items-center py-4 font-sans w-full", showDebug ? "min-h-screen" : "h-screen overflow-hidden")}>
+    <div className={cn("bg-gray-50 dark:bg-gray-950 flex flex-col items-center py-4 font-sans w-full", showDebug ? "min-h-screen" : "h-screen overflow-hidden")}>
       <div className="w-full px-4 xl:px-8 flex flex-col gap-4 h-full">
-        
+
         {/* Header */}
-        <header className="flex flex-col 2xl:flex-row portrait:2xl:flex-col justify-between items-center bg-white p-4 lg:p-6 portrait:p-4 rounded-2xl shadow-sm border border-gray-100 gap-4 portrait:gap-3 shrink-0">
-          <div className="flex items-center gap-4">
-            <img src="/match_NUR_Logo_10pt.svg" alt="Match Logo" className="h-10" onError={(e) => (e.currentTarget.style.display = 'none')} />
+        <header className="relative flex flex-col 2xl:flex-row portrait:2xl:flex-col justify-between items-center bg-white dark:bg-gray-900 p-4 lg:p-6 portrait:p-4 pr-14 lg:pr-16 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 gap-4 portrait:gap-3 shrink-0">
+          <ThemeToggle className="absolute top-3 right-3" />
+          <div className="flex items-center gap-5">
+            <img src="/match_NUR_Logo_10pt.svg" alt="Match Logo" className="h-14 lg:h-20" onError={(e) => (e.currentTarget.style.display = 'none')} />
             <div className="flex flex-col">
-              <h1 className="text-xl lg:text-2xl font-bold text-gray-800 tracking-tight whitespace-nowrap">Connect Four AI</h1>
-              <div className="flex gap-4 mt-1">
-                <Link to="/game" className={cn("text-xs font-semibold flex items-center gap-1 transition-colors", !showDebug ? "text-brand-green" : "text-gray-400 hover:text-gray-600")}>
-                  <Gamepad2 size={14} /> Play
+              <h1 className="text-2xl lg:text-4xl font-bold text-gray-800 dark:text-gray-100 tracking-tight whitespace-nowrap">Connect Four AI</h1>
+              <div className="flex gap-5 mt-1.5">
+                <Link to="/game" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", !showDebug ? "text-brand-green" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
+                  <Gamepad2 size={18} /> Play
                 </Link>
-                <Link to="/debugging" className={cn("text-xs font-semibold flex items-center gap-1 transition-colors", showDebug ? "text-purple-600" : "text-gray-400 hover:text-gray-600")}>
-                  <Bug size={14} /> Debug
+                <Link to="/debugging" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", showDebug ? "text-purple-600 dark:text-purple-400" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
+                  <Bug size={18} /> Debug
                 </Link>
               </div>
             </div>
           </div>
-          
+
           <div className="flex flex-wrap items-center justify-center gap-4 lg:gap-6 w-full 2xl:w-auto portrait:2xl:w-full">
             {/* Difficulty Selector */}
-            <div className="flex bg-gray-100 p-1 rounded-lg">
+            <div className="flex bg-gray-100 dark:bg-gray-800 p-1.5 rounded-xl">
               {['easy', 'medium', 'hard', 'impossible'].map(level => (
                 <button
                   key={level}
                   onClick={() => setDifficulty(level)}
                   className={cn(
-                    "px-3 py-1.5 lg:px-4 lg:py-2 rounded-md text-sm font-bold capitalize transition-all", 
-                    difficulty === level ? "bg-white shadow-sm text-brand-green" : "text-gray-500 hover:text-gray-700"
+                    "px-5 py-2.5 lg:px-7 lg:py-3.5 rounded-lg text-lg lg:text-xl font-bold capitalize transition-all",
+                    difficulty === level ? "bg-white dark:bg-gray-700 shadow-sm text-brand-green" : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                   )}
                 >
                   {level}
@@ -150,31 +150,29 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                 onClick={async () => {
                   await fetch(`${API_BASE}/reset`, { method: 'POST' });
                 }}
-                className="bg-red-100 hover:bg-red-200 text-red-700 px-4 py-2 lg:px-6 lg:py-2 rounded-lg text-sm font-bold transition-colors shadow-sm"
+                className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-950 dark:hover:bg-red-900 dark:text-red-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm"
               >
                 Reset
               </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-4">
-            <span className={cn("px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider whitespace-nowrap",
-              matchState === 'in_game' ? 'bg-blue-100 text-blue-700 border border-blue-200 shadow-sm' :
-              'bg-yellow-100 text-yellow-800 border border-yellow-300 shadow-sm'
-            )}>
-              {matchState === 'in_game' ? 'In Game' : 'Finished'}
-            </span>
+          <div className="flex flex-wrap items-center justify-center gap-8 lg:gap-16 mt-4 lg:mt-6 2xl:mt-0 portrait:2xl:mt-4">
             <div className={cn(
-              "flex items-center gap-2 px-3 py-2 lg:px-4 lg:py-2 rounded-full font-bold text-sm transition-colors whitespace-nowrap",
-              turn === 'human' ? "bg-brand-green/20 text-green-900 border border-brand-green" : "bg-gray-100 text-gray-500"
+              "flex items-center gap-4 px-8 py-5 lg:px-10 lg:py-6 rounded-2xl font-black text-3xl lg:text-4xl uppercase tracking-wide whitespace-nowrap transition-all duration-300",
+              turn === 'human'
+                ? "bg-brand-green/20 text-green-900 dark:text-brand-green border-4 border-brand-green scale-105 shadow-lg"
+                : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600 border-4 border-transparent opacity-60"
             )}>
-              <User size={16} /> Human Turn
+              <User className="w-9 h-9 lg:w-12 lg:h-12" /> Human
             </div>
             <div className={cn(
-              "flex items-center gap-2 px-3 py-2 lg:px-4 lg:py-2 rounded-full font-bold text-sm transition-colors whitespace-nowrap",
-              turn === 'robot' ? "bg-gray-800 text-white shadow-lg" : "bg-gray-100 text-gray-500"
+              "flex items-center gap-4 px-8 py-5 lg:px-10 lg:py-6 rounded-2xl font-black text-3xl lg:text-4xl uppercase tracking-wide whitespace-nowrap transition-all duration-300",
+              turn === 'robot'
+                ? "bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900 border-4 border-gray-800 dark:border-gray-100 scale-105 shadow-lg"
+                : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600 border-4 border-transparent opacity-60"
             )}>
-              <Bot size={16} /> Robot Turn
+              <Bot className="w-9 h-9 lg:w-12 lg:h-12" /> Robot
             </div>
           </div>
         </header>
@@ -182,16 +180,16 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
         {/* Main Content */}
         <div className="flex flex-col gap-4 items-center w-full flex-1 min-h-0">
           {errorMsg && (
-            <div className="w-full bg-red-100 p-4 rounded-xl shadow-sm border-2 border-red-500 flex items-center justify-center animate-pulse shrink-0">
-              <span className="text-red-700 font-bold text-lg flex items-center gap-2">
+            <div className="w-full bg-red-100 dark:bg-red-950 p-4 rounded-xl shadow-sm border-2 border-red-500 flex items-center justify-center animate-pulse shrink-0">
+              <span className="text-red-700 dark:text-red-300 font-bold text-lg flex items-center gap-2">
                 ⚠ {errorMsg}
               </span>
             </div>
           )}
           
           {gameOver && !errorMsg && (
-            <div className="w-full bg-white p-4 rounded-2xl shadow-xl border-4 border-yellow-400 flex flex-col items-center justify-center animate-bounce-short shrink-0">
-              <h2 className="text-2xl lg:text-3xl font-black text-gray-800 uppercase tracking-widest mb-1 lg:mb-2">Game Over!</h2>
+            <div className="w-full bg-white dark:bg-gray-900 p-4 rounded-2xl shadow-xl border-4 border-yellow-400 flex flex-col items-center justify-center animate-bounce-short shrink-0">
+              <h2 className="text-2xl lg:text-3xl font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest mb-1 lg:mb-2">Game Over!</h2>
               <div className="text-lg lg:text-xl font-bold">
                 {winner === 1 ? (
                   <span className="text-brand-green flex items-center gap-2">🎉 Human Wins! 🎉</span>
@@ -220,16 +218,16 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
           {showDebug && (
             <div className="grid grid-cols-1 lg:grid-cols-3 portrait:grid-cols-1 gap-6 w-full mt-8">
               
-              <div className="lg:col-span-2 portrait:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
-                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <div className="lg:col-span-2 portrait:col-span-1 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+                <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                   <Activity size={20} className="text-purple-500" /> Vision Feed
                 </h2>
-                <div className="text-sm text-gray-600 flex gap-4">
-                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border-2 border-white inline-block bg-gray-200"></span> Empty</span>
+                <div className="text-sm text-gray-600 dark:text-gray-400 flex gap-4">
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border-2 border-white dark:border-gray-600 inline-block bg-gray-200 dark:bg-gray-700"></span> Empty</span>
                   <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border-2 border-green-500 inline-block bg-transparent"></span> P1 Detected</span>
                   <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border-2 border-red-500 inline-block bg-transparent"></span> P2 Detected</span>
                 </div>
-                <div className="rounded-lg overflow-hidden border border-gray-200 bg-gray-100 aspect-[4/3] flex items-center justify-center relative w-full">
+                <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 aspect-[4/3] flex items-center justify-center relative w-full">
                   <img 
                     src={`${API_BASE.replace('/api', '')}/api/video-feed`} 
                     alt="RealSense Stream" 
@@ -243,20 +241,20 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
               </div>
 
               <div className="flex flex-col gap-6">
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
-                  <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+                  <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                     <Activity size={20} className="text-blue-500" /> Robot Status
                   </h2>
-                  
+
                   <div className="flex flex-col gap-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-500 font-bold">State</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-bold">State</span>
                       <span className={cn(
                         "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider",
-                        robotState === 'idle' ? "bg-gray-100 text-gray-600" :
-                        robotState === 'analyzing' ? "bg-blue-100 text-blue-700 animate-pulse" :
-                        robotState === 'thinking' ? "bg-purple-100 text-purple-700 animate-pulse" :
-                        "bg-orange-100 text-orange-700 animate-bounce"
+                        robotState === 'idle' ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" :
+                        robotState === 'analyzing' ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 animate-pulse" :
+                        robotState === 'thinking' ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 animate-pulse" :
+                        "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300 animate-bounce"
                       )}>
                         {robotState}
                       </span>
@@ -264,13 +262,13 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
-                  <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+                  <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                     <Settings2 size={20} className="text-gray-500" /> Settings
                   </h2>
-                  
+
                   <label className="flex items-center justify-between cursor-pointer group">
-                    <span className="text-sm font-bold text-gray-700 group-hover:text-gray-900 transition-colors">AI Enabled</span>
+                    <span className="text-sm font-bold text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">AI Enabled</span>
                     <div className="relative">
                       <input 
                         type="checkbox" 
@@ -280,7 +278,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                       />
                       <div className={cn(
                         "block w-10 h-6 rounded-full transition-colors",
-                        aiEnabled ? "bg-brand-green" : "bg-gray-300"
+                        aiEnabled ? "bg-brand-green" : "bg-gray-300 dark:bg-gray-700"
                       )}></div>
                       <div className={cn(
                         "absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform",
@@ -290,7 +288,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                   </label>
                   
                   <label className="flex items-center justify-between cursor-pointer group">
-                    <span className="text-sm font-bold text-gray-700 group-hover:text-gray-900 transition-colors">Simulation Mode</span>
+                    <span className="text-sm font-bold text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">Simulation Mode</span>
                     <div className="relative">
                       <input 
                         type="checkbox" 
@@ -300,7 +298,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                       />
                       <div className={cn(
                         "block w-10 h-6 rounded-full transition-colors",
-                        simulationMode ? "bg-brand-green" : "bg-gray-300"
+                        simulationMode ? "bg-brand-green" : "bg-gray-300 dark:bg-gray-700"
                       )}></div>
                       <div className={cn(
                         "absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform",
@@ -309,8 +307,8 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                     </div>
                   </label>
                   
-                  <div className="flex flex-col gap-2 pt-2 border-t border-gray-100">
-                    <label className="text-sm font-bold text-gray-700 flex justify-between">
+                  <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300 flex justify-between">
                       <span>CV Debounce Delay</span>
                       <span className="text-brand-green">{debounceTime.toFixed(1)}s</span>
                     </label>
@@ -321,17 +319,17 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                       onChange={(e) => setDebounceTime(parseFloat(e.target.value))}
                       className="w-full accent-brand-green"
                     />
-                    <p className="text-xs text-gray-500">Delay before accepting a newly detected token to prevent mid-air bugs.</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Delay before accepting a newly detected token to prevent mid-air bugs.</p>
                   </div>
                   
                   {simulationMode && aiEnabled && (
-                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2 rounded-lg flex items-start gap-2 mt-2">
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950 dark:border-amber-900 dark:text-amber-300 text-xs px-3 py-2 rounded-lg flex items-start gap-2 mt-2">
                       <span className="font-bold">⚠</span>
                       <p>AI Advisory active. The AI will advise you via the UI, but you must physically place its black token.</p>
                     </div>
                   )}
                   {simulationMode && !aiEnabled && (
-                    <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs px-3 py-2 rounded-lg flex items-start gap-2 mt-2">
+                    <div className="bg-blue-50 border border-blue-200 text-blue-800 dark:bg-blue-950 dark:border-blue-900 dark:text-blue-300 text-xs px-3 py-2 rounded-lg flex items-start gap-2 mt-2">
                       <span className="font-bold">ℹ</span>
                       <p>2-Player Manual Mode. Play entirely physically without AI interference.</p>
                     </div>

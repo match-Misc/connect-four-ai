@@ -99,6 +99,20 @@ class GameState:
 
 state = GameState(settings)
 
+def difficulty_toggle_allowed():
+    # The button may only change difficulty between games, i.e. while the
+    # physical board is cleared and no move is in flight.
+    return count_tokens(state.internal_board) == 0 and state.robot_state == "idle"
+
+def on_difficulty_changed(name):
+    save_settings()
+
+robot_controller.difficulty_toggle_guard = difficulty_toggle_allowed
+robot_controller.on_difficulty_changed = on_difficulty_changed
+# Defined further down; the robot's reset button does exactly what the web UI's
+# reset button does.
+robot_controller.on_reset_requested = lambda: reset_game_state()
+
 def start_robot_move():
     with state.robot_move_lock:
         if not state.ai_enabled or state.robot_state != "idle":
@@ -220,6 +234,12 @@ def get_board_state():
                 state.error_msg = None
                 state.invalid_stones = []
                 state.robot_target_col = None
+                # A robot move that ends the game leaves robot_state at
+                # "waiting_for_drop", since no further token detection follows to
+                # advance the turn. Clearing the board is a fresh start, so the
+                # robot is idle again -- without this, start_robot_move() would
+                # refuse to ever run again.
+                state.robot_state = "idle"
                 if state.game_over:
                     state.game_over = False
                     state.winner = None
@@ -404,8 +424,7 @@ def update_config():
     save_settings()
     return jsonify({"status": "success"})
 
-@app.route("/api/reset", methods=["POST"])
-def reset_game():
+def reset_game_state():
     state.internal_board = [[0]*7 for _ in range(6)]
     state.virtual_board = [[0]*7 for _ in range(6)]
     state.turn = "human"
@@ -414,6 +433,10 @@ def reset_game():
     state.game_over = False
     state.winner = None
     state.match_state = "in_game"
+
+@app.route("/api/reset", methods=["POST"])
+def reset_game():
+    reset_game_state()
     return jsonify({"status": "success"})
 
 def gen_frames():
