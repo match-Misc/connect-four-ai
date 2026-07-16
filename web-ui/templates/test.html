@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        #log { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: scroll; }
+        .update { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>Socket.IO Connection Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="log"></div>
+    
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        const logDiv = document.getElementById('log');
+        const statusDiv = document.getElementById('status');
+        
+        function addLog(message) {
+            const div = document.createElement('div');
+            div.className = 'update';
+            div.textContent = new Date().toLocaleTimeString() + ': ' + message;
+            logDiv.appendChild(div);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        socket.on('connect', function() {
+            statusDiv.textContent = 'Connected!';
+            statusDiv.style.color = 'green';
+            addLog('Connected to server');
+        });
+        
+        socket.on('disconnect', function() {
+            statusDiv.textContent = 'Disconnected';
+            statusDiv.style.color = 'red';
+            addLog('Disconnected from server');
+        });
+        
+        socket.on('board_update', function(data) {
+            addLog('Received board_update: ' + JSON.stringify(data));
+            console.log('Full data:', data);
+        });
+    </script>
+</body>
+</html>

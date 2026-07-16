@@ -145,6 +145,7 @@ p {
     height: 360px; /* Full board height */
     cursor: pointer;
     opacity: 0; /* Invisible */
+    display: none; /* Disabled for detection mode */
 }
 
 .column-overlay:hover {

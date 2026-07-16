@@ -11,3 +11,13 @@ Comprehensive documentation is available in the [`documentation/`](./documentati
 ## 🚀 Quick Start
 
 ToDo
+
+## Current start
+
+python3 web-ui/app/app.py
+
+Wait 10 seconds
+
+python detection.py
+
+Next: add rgb max values to the calibration and save it in the config file.

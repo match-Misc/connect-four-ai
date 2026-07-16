@@ -3,13 +3,17 @@
 Connect Four Board Calibration Script
 
 This script performs computer vision calibration for detecting the current state
-of a Connect Four board using a webcam. It allows users to:
+of a Connect Four board using an Intel RealSense camera (color stream). It allows users to:
 1. Define the board area using a rectangle (4 corners)
 2. Align holes using sliders for diameter, horizontal and vertical spacing
 3. Calibrate colors for both players by sampling from the first two columns
 4. Export calibration data to JSON for use in detection scripts
 
 Usage: python calibration.py
+
+Notes:
+- Requires `pyrealsense2` to be installed and a connected RealSense device.
+- The previous webcam implementation has been replaced by a RealSense pipeline.
 """
 
 import json
@@ -17,6 +21,8 @@ import os
 import sys
 import threading
 import time
+
+import pyrealsense2 as rs
 
 import cv2
 import dearpygui.dearpygui as dpg
@@ -38,45 +44,206 @@ class ConnectFourCalibrator:
         self.saturation = 100  # 0-200, 100=1.0
         self.brightness = 0  # -100 to 100
 
-        # Webcam and threading
-        self.cap = None
+        # Max RGB values
+        self.max_r = 255
+        self.max_g = 255
+        self.max_b = 255
+
+        # RealSense pipeline and threading
+        self.pipeline = None
+        self.config = None
+        self.align = None
+        self.depth_scale = None
+        self.cap = None  # preserved for backward compatibility (unused now)
         self.current_frame = None
+        self.current_depth_m = None  # aligned to color, meters
         self.running = True
         self.frame_lock = threading.Lock()
+        self.frame_width = 640  # Default, will be updated
+        self.frame_height = 480  # Default, will be updated
 
         # GUI elements
         self.window_id = None
         self.texture_id = None
+        self.image_id = None
         self.status_text = ""
         self.player1_legend_id = None
         self.player2_legend_id = None
 
+    def load_last_calibration(self, filename="../config/calibration.json"):
+        """Load previous calibration from JSON if available and prefill fields.
+
+        Fields loaded:
+        - corners (top_left, top_right, bottom_left, bottom_right) → self.corners list
+        - hole_diameter, horizontal_spacing, vertical_spacing
+        - player1_color, player2_color (optional)
+        - contrast, saturation, brightness (optional)
+        """
+        try:
+            if not os.path.exists(filename):
+                self.status_text = f"No previous calibration found at {filename}."
+                return False
+            with open(filename, "r") as f:
+                data = json.load(f)
+
+            # Corners
+            corners_dict = data.get("corners")
+            if corners_dict:
+                self.corners = [
+                    tuple(corners_dict.get("top_left", ())),
+                    tuple(corners_dict.get("top_right", ())),
+                    tuple(corners_dict.get("bottom_left", ())),
+                    tuple(corners_dict.get("bottom_right", ())),
+                ]
+                # Validate completeness
+                if any(len(pt) != 2 for pt in self.corners):
+                    self.corners = []
+
+            # Grid and image adjustments
+            self.hole_diameter = int(data.get("hole_diameter", self.hole_diameter))
+            self.h_spacing = int(data.get("horizontal_spacing", self.h_spacing))
+            self.v_spacing = int(data.get("vertical_spacing", self.v_spacing))
+            self.contrast = int(data.get("contrast", self.contrast))
+            self.saturation = int(data.get("saturation", self.saturation))
+            self.brightness = int(data.get("brightness", self.brightness))
+
+            # Colors (optional)
+            p1 = data.get("player1_color")
+            p2 = data.get("player2_color")
+            if p1 and p2:
+                self.player1_color = [int(v) for v in p1]
+                self.player2_color = [int(v) for v in p2]
+                self.calibration_complete = True
+
+            # Max RGB (optional)
+            self.max_r = int(data.get("max_r", self.max_r))
+            self.max_g = int(data.get("max_g", self.max_g))
+            self.max_b = int(data.get("max_b", self.max_b))
+
+            self.status_text = "Loaded previous calibration. Adjust or save as needed."
+            return True
+        except Exception as e:
+            self.status_text = f"Failed to load calibration: {e}"
+            return False
+
     def start_webcam(self):
-        """Start webcam capture in a separate thread"""
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            self.status_text = "Error: Could not open webcam"
+        """Start RealSense color stream capture in a separate thread (name kept for compatibility)."""
+        try:
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            # Configure depth and color streams (matched resolution for alignment)
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            # self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+            # self.config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
+            profile = self.pipeline.start(self.config)
+
+            # Get actual stream dimensions
+            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            self.frame_width = color_profile.width()
+            self.frame_height = color_profile.height()
+            print(f"RealSense resolution: {self.frame_width}x{self.frame_height}")
+
+            # Depth scale (to convert z16 units to meters)
+            depth_sensor = profile.get_device().first_depth_sensor()
+            self.depth_scale = float(depth_sensor.get_depth_scale())
+            # Align depth to color
+            self.align = rs.align(rs.stream.color)
+        except Exception as e:
+            self.status_text = f"Error: Could not start RealSense pipeline ({e})"
             return False
 
         def capture_loop():
             while self.running:
-                ret, frame = self.cap.read()
-                if ret:
+                try:
+                    frames = self.pipeline.wait_for_frames()
+                    if self.align is not None:
+                        frames = self.align.process(frames)
+                    color_frame = frames.get_color_frame()
+                    depth_frame = frames.get_depth_frame()
+                    if not color_frame or not depth_frame:
+                        continue
+                    frame = np.asanyarray(color_frame.get_data())
+                    depth_raw = np.asanyarray(depth_frame.get_data())  # uint16
+                    # Convert to meters
+                    if self.depth_scale is not None:
+                        depth_m = depth_raw.astype(np.float32) * self.depth_scale
+                    else:
+                        depth_m = depth_raw.astype(np.float32)
                     with self.frame_lock:
                         self.current_frame = frame.copy()
-                time.sleep(0.033)  # ~30 FPS
+                        self.current_depth_m = depth_m
+                except Exception as e:
+                    self.status_text = f"RealSense error: {e}"
+                # Small sleep to avoid busy loop; RealSense already limits FPS
+                time.sleep(0.001)
 
         self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
         self.capture_thread.start()
         return True
 
     def stop_webcam(self):
-        """Stop webcam capture"""
+        """Stop RealSense capture"""
         self.running = False
-        if self.capture_thread.is_alive():
+        if hasattr(self, "capture_thread") and self.capture_thread.is_alive():
             self.capture_thread.join()
-        if self.cap:
-            self.cap.release()
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
+
+    def compute_depth_map(self):
+        """Compute a 6x7 depth map (meters) at each hole center from the latest aligned depth.
+
+        Returns a list of 6 lists (rows top->bottom), each with 7 depth values in meters or None if invalid.
+        """
+        if self.current_depth_m is None or len(self.corners) != 4:
+            return None
+
+        # Use same grid mapping as for drawing
+        corners = np.array(self.corners)
+        dst_points = np.array(
+            [
+                [0, 0],
+                [6 * self.h_spacing, 0],
+                [0, 5 * self.v_spacing],
+                [6 * self.h_spacing, 5 * self.v_spacing],
+            ],
+            dtype=np.float32,
+        )
+        src_points = corners.astype(np.float32)
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+        h, w = self.current_depth_m.shape[:2]
+        result = [[None for _ in range(7)] for _ in range(6)]
+
+        # Radius for sampling median depth to reduce noise
+        sample_radius = max(1, self.hole_diameter // 6)
+
+        for row in range(6):
+            for col in range(7):
+                grid_x = col * self.h_spacing
+                grid_y = row * self.v_spacing
+                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
+                transformed = cv2.perspectiveTransform(
+                    grid_point.reshape(1, 1, 2), np.linalg.inv(M)
+                )
+                x, y = transformed[0, 0]
+                xi, yi = int(round(x)), int(round(y))
+                if 0 <= xi < w and 0 <= yi < h:
+                    y0, y1 = max(0, yi - sample_radius), min(h, yi + sample_radius + 1)
+                    x0, x1 = max(0, xi - sample_radius), min(w, xi + sample_radius + 1)
+                    roi = self.current_depth_m[y0:y1, x0:x1]
+                    valid = roi[roi > 0]
+                    if valid.size > 0:
+                        result[row][col] = float(np.median(valid))
+                    else:
+                        result[row][col] = None
+                else:
+                    result[row][col] = None
+
+        return result
 
     def mouse_callback(self, sender, app_data, user_data):
         """Handle mouse clicks for defining board corners"""
@@ -90,8 +257,8 @@ class ConnectFourCalibrator:
         rel_x = mouse_x - image_pos[0]
         rel_y = mouse_y - image_pos[1]
 
-        # Check if click is within image bounds (640x480)
-        if 0 <= rel_x < 640 and 0 <= rel_y < 480:
+        # Check if click is within image bounds
+        if 0 <= rel_x < self.frame_width and 0 <= rel_y < self.frame_height:
             if len(self.corners) < 4:
                 # Scale coordinates to match actual image size if needed
                 # For now, assume 1:1 mapping
@@ -298,7 +465,7 @@ class ConnectFourCalibrator:
 
         return False
 
-    def save_calibration(self, filename="calibration.json"):
+    def save_calibration(self, filename="../config/calibration.json"):
         """Save calibration data to JSON file"""
         if not self.calibration_complete:
             self.status_text = (
@@ -324,7 +491,15 @@ class ConnectFourCalibrator:
             "contrast": self.contrast,
             "saturation": self.saturation,
             "brightness": self.brightness,
+            "max_r": self.max_r,
+            "max_g": self.max_g,
+            "max_b": self.max_b,
         }
+
+        # Capture and include depth map (meters) for all 42 positions
+        depth_map = self.compute_depth_map()
+        if depth_map is not None:
+            data["depth_m"] = depth_map
 
         try:
             with open(filename, "w") as f:
@@ -335,8 +510,34 @@ class ConnectFourCalibrator:
             self.status_text = f"Error saving calibration: {e}"
             return False
 
-    def save_grid_only(self, filename="calibration.json"):
-        """Save only grid calibration data, updating existing calibration.json"""
+    def save_max_rgb(self, filename="config/calibration.json"):
+        """Save only max RGB values to the JSON file"""
+        if not os.path.exists(filename):
+            self.status_text = (
+                f"Error: {filename} does not exist. Please save full calibration first."
+            )
+            return False
+
+        try:
+            # Load existing calibration
+            with open(filename, "r") as f:
+                data = json.load(f)
+
+            # Update max RGB
+            data["max_r"] = self.max_r
+            data["max_g"] = self.max_g
+            data["max_b"] = self.max_b
+
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+            self.status_text = f"Max RGB saved to {filename}"
+            return True
+        except Exception as e:
+            self.status_text = f"Error saving max RGB: {e}"
+            return False
+
+    def save_grid_only(self, filename="../config/calibration.json"):
+        """Save only grid calibration data, updating existing config/calibration.json"""
         if len(self.corners) != 4:
             self.status_text = "Please define all 4 corners first."
             return False
@@ -366,6 +567,11 @@ class ConnectFourCalibrator:
             data["contrast"] = self.contrast
             data["saturation"] = self.saturation
             data["brightness"] = self.brightness
+
+            # Update depth map as well
+            depth_map = self.compute_depth_map()
+            if depth_map is not None:
+                data["depth_m"] = depth_map
 
             # Keep existing colors if they exist, but don't require them
 
@@ -400,23 +606,25 @@ class ConnectFourCalibrator:
     def create_gui(self):
         """Create the Dear PyGui interface"""
         dpg.create_context()
-        dpg.create_viewport(title="Connect Four Calibration", width=1200, height=800)
+        dpg.create_viewport(title="Connect Four Calibration", width=2200, height=1200)
 
-        with dpg.window(label="Calibration", width=1200, height=800) as self.window_id:
+        # Create texture registry outside of window
+        with dpg.texture_registry():
+            # Create a placeholder texture (will be updated with actual frame)
+            self.texture_id = dpg.add_raw_texture(
+                self.frame_width,
+                self.frame_height,
+                np.zeros((self.frame_width * self.frame_height * 3,), dtype=np.float32),
+                format=dpg.mvFormat_Float_rgb,
+            )
+
+        with dpg.window(label="Calibration", width=2200, height=1200) as self.window_id:
             with dpg.group(horizontal=True):
                 # Left side - Image display
-                with dpg.child_window(width=800, height=600):
-                    dpg.add_text("Webcam Feed - Click to define corners")
-                    with dpg.texture_registry():
-                        # Create a placeholder texture (will be updated with actual frame)
-                        self.texture_id = dpg.add_raw_texture(
-                            640,
-                            480,
-                            np.zeros((640 * 480 * 3,), dtype=np.float32),
-                            format=dpg.mvFormat_Float_rgb,
-                        )
+                with dpg.child_window(width=self.frame_width, height=self.frame_height + 20):
+                    dpg.add_text("RealSense Feed - Click to define corners")
                     self.image_id = dpg.add_image(
-                        self.texture_id, width=640, height=480
+                        self.texture_id, width=self.frame_width, height=self.frame_height
                     )
                     # Use mouse handlers instead of item handlers for better coordinate handling
                     with dpg.handler_registry():
@@ -431,36 +639,78 @@ class ConnectFourCalibrator:
                 # Right side - Controls
                 with dpg.child_window(width=380, height=600):
                     dpg.add_text("Hole Parameters")
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Diameter",
                         default_value=self.hole_diameter,
                         min_value=10,
-                        max_value=100,
+                        max_value=200,
                         callback=lambda s, a: setattr(self, "hole_diameter", a),
+                    )
+                    dpg.add_input_int(
+                        label="Horizontal Spacing",
+                        default_value=self.h_spacing,
+                        min_value=10,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "h_spacing", a),
+                    )
+                    dpg.add_input_int(
+                        label="Vertical Spacing",
+                        default_value=self.v_spacing,
+                        min_value=10,
+                        max_value=200,
+                        callback=lambda s, a: setattr(self, "v_spacing", a),
                     )
 
                     dpg.add_separator()
                     dpg.add_text("Image Adjustments")
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Contrast",
                         default_value=self.contrast,
                         min_value=0,
                         max_value=200,
                         callback=lambda s, a: setattr(self, "contrast", a),
                     )
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Saturation",
                         default_value=self.saturation,
                         min_value=0,
                         max_value=200,
                         callback=lambda s, a: setattr(self, "saturation", a),
                     )
-                    dpg.add_slider_int(
+                    dpg.add_input_int(
                         label="Brightness",
-                        default_value=self.brightness + 100,
+                        default_value=self.brightness,
+                        min_value=-100,
+                        max_value=100,
+                        callback=lambda s, a: setattr(self, "brightness", a),
+                    )
+
+                    dpg.add_separator()
+                    dpg.add_text("Max RGB Values")
+                    dpg.add_input_int(
+                        label="Max R",
+                        default_value=self.max_r,
                         min_value=0,
-                        max_value=200,
-                        callback=lambda s, a: setattr(self, "brightness", a - 100),
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_r", a),
+                    )
+                    dpg.add_input_int(
+                        label="Max G",
+                        default_value=self.max_g,
+                        min_value=0,
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_g", a),
+                    )
+                    dpg.add_input_int(
+                        label="Max B",
+                        default_value=self.max_b,
+                        min_value=0,
+                        max_value=255,
+                        callback=lambda s, a: setattr(self, "max_b", a),
+                    )
+                    dpg.add_button(
+                        label="Save Max RGB",
+                        callback=self.save_max_rgb_callback,
                     )
 
                     dpg.add_separator()
@@ -500,6 +750,14 @@ class ConnectFourCalibrator:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
+        # If colors were loaded, update legend now
+        if self.player1_legend_id and self.player1_color:
+            dpg.set_value(self.player1_legend_id, f"RGB{self.player1_color}")
+            dpg.configure_item(self.player1_legend_id, color=self.player1_color)
+        if self.player2_legend_id and self.player2_color:
+            dpg.set_value(self.player2_legend_id, f"RGB{self.player2_color}")
+            dpg.configure_item(self.player2_legend_id, color=self.player2_color)
+
     def calibrate_colors_callback(self, sender, app_data, user_data):
         """Callback for calibrate colors button"""
         if len(self.corners) == 4:
@@ -526,6 +784,10 @@ class ConnectFourCalibrator:
         """Callback for save grid only button"""
         self.save_grid_only()
 
+    def save_max_rgb_callback(self, sender, app_data, user_data):
+        """Callback for save max RGB button"""
+        self.save_max_rgb()
+
     def reset_corners_callback(self, sender, app_data, user_data):
         """Callback for reset corners button"""
         self.corners = []
@@ -541,6 +803,9 @@ class ConnectFourCalibrator:
 
     def run_calibration(self):
         """Main calibration loop"""
+        # Preload last calibration if available
+        self.load_last_calibration()
+
         if not self.start_webcam():
             return False
 
