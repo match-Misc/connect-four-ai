@@ -138,7 +138,12 @@ class VisionService:
         def capture_loop():
             while self.running:
                 try:
-                    frames = self.pipeline.wait_for_frames()
+                    # Bounded wait so stop() is observed promptly; a blocking
+                    # wait_for_frames() would keep this thread inside librealsense
+                    # long after running goes False.
+                    ok, frames = self.pipeline.try_wait_for_frames(200)
+                    if not ok:
+                        continue
                     if self.align:
                         frames = self.align.process(frames)
                     color_frame = frames.get_color_frame()
@@ -163,13 +168,23 @@ class VisionService:
 
     def stop(self):
         self.running = False
-        if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join()
+        thread, self.capture_thread = self.capture_thread, None
+        if thread and thread.is_alive():
+            thread.join(timeout=2.0)
+            if thread.is_alive():
+                # Stopping the pipeline while the capture thread is still inside
+                # librealsense segfaults the process. Leave it open instead; the
+                # OS reclaims the device when we exit.
+                print("VisionService: capture thread did not exit; leaving pipeline open")
+                return
         if self.pipeline:
             try:
                 self.pipeline.stop()
-            except:
-                pass
+            except Exception as e:
+                print(f"VisionService: error stopping pipeline ({e})")
+            self.pipeline = None
+        self.depth_sensor = None
+        self.align = None
 
     def get_hole_coordinates(self):
         if len(self.corners) < 4:

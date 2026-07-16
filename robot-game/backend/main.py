@@ -1,4 +1,6 @@
 from flask import Flask, request, jsonify, Response
+import json
+import os
 from flask_cors import CORS
 import threading
 import time
@@ -9,45 +11,132 @@ from robot_controller import RobotController
 app = Flask(__name__)
 CORS(app)
 
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+DEFAULT_SETTINGS = {
+    "simulation_mode": False,
+    "debounce_time": 0.5,
+    "ai_enabled": True,
+    "difficulty": "medium",
+}
+
+def load_settings():
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_FILE) as f:
+            stored = json.load(f)
+    except FileNotFoundError:
+        return settings
+    except (OSError, ValueError) as e:
+        print(f"Could not read {SETTINGS_FILE} ({e}); falling back to defaults")
+        return settings
+
+    if not isinstance(stored, dict):
+        print(f"Ignoring malformed {SETTINGS_FILE}; falling back to defaults")
+        return settings
+
+    for key in DEFAULT_SETTINGS:
+        if key in stored:
+            settings[key] = stored[key]
+
+    settings["simulation_mode"] = bool(settings["simulation_mode"])
+    settings["ai_enabled"] = bool(settings["ai_enabled"])
+    settings["difficulty"] = str(settings["difficulty"])
+    try:
+        settings["debounce_time"] = float(settings["debounce_time"])
+    except (TypeError, ValueError):
+        settings["debounce_time"] = DEFAULT_SETTINGS["debounce_time"]
+    return settings
+
+def save_settings():
+    settings = {
+        "simulation_mode": state.simulation_mode,
+        "debounce_time": state.debounce_time,
+        "ai_enabled": state.ai_enabled,
+        "difficulty": robot_controller.difficulty_name,
+    }
+    tmp_path = f"{SETTINGS_FILE}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp_path, SETTINGS_FILE)
+    except OSError as e:
+        print(f"Could not save settings: {e}")
+
+settings = load_settings()
+
 # Global services
 vision_service = VisionService()
-robot_controller = RobotController(simulate=True)
+robot_controller = RobotController(
+    simulate=settings["simulation_mode"],
+    difficulty=settings["difficulty"],
+)
 
 # Application state
 class GameState:
-    def __init__(self):
+    def __init__(self, settings):
         self.internal_board = [[0 for _ in range(7)] for _ in range(6)]
         self.virtual_board = [[0 for _ in range(7)] for _ in range(6)]
         self.turn = "human" # "human" or "robot"
         self.robot_state = "idle" # "idle", "analyzing", "thinking", "moving"
-        self.simulation_mode = True
+        self.simulation_mode = settings["simulation_mode"]
         self.game_over = False
         self.winner = None
-        self.match_state = "idle" # "idle", "in_game", "finished"
-        
+        self.match_state = "in_game" # "in_game", "finished"
+
         # Validation State
-        self.debounce_time = 1.0
+        self.debounce_time = settings["debounce_time"]
         self.pending_board = None
         self.pending_board_time = 0
         self.error_msg = None
         self.invalid_stones = []
-        
-        # AI Config
-        self.ai_enabled = True
-        self.robot_target_col = None
 
-state = GameState()
+        # AI Config
+        self.ai_enabled = settings["ai_enabled"]
+        self.robot_target_col = None
+        # Guards the idle -> analyzing transition so only one move thread runs.
+        self.robot_move_lock = threading.Lock()
+
+state = GameState(settings)
+
+def start_robot_move():
+    with state.robot_move_lock:
+        if not state.ai_enabled or state.robot_state != "idle":
+            return False
+        state.robot_state = "analyzing"
+    threading.Thread(target=execute_robot_move, daemon=True).start()
+    return True
 
 # We need to start/stop the vision service around the Flask app lifecycle.
 # In a simple setup, we can start it on the first request, or right here.
 vision_service.start()
 
 import atexit
+import signal
+
+_cleanup_started = False
+
 def cleanup():
+    global _cleanup_started
+    if _cleanup_started:
+        return
+    _cleanup_started = True
     vision_service.stop()
     robot_controller.stop_robot_server()
 
 atexit.register(cleanup)
+
+def handle_sigterm(signum, frame):
+    # The default SIGTERM disposition skips atexit, which would leave the camera
+    # and port 8000 held by a process that never ran cleanup().
+    if _cleanup_started:
+        # A shutdown is already in flight (SIGINT -> atexit). Interrupting it
+        # while librealsense is mid-teardown is what dumps core, so let it run.
+        return
+    cleanup()
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, handle_sigterm)
 
 def count_tokens(board):
     return sum(1 for row in board for cell in row if cell != 0)
@@ -135,7 +224,7 @@ def get_board_state():
                     state.game_over = False
                     state.winner = None
                     state.turn = "human"
-                    state.match_state = "idle"
+                    state.match_state = "in_game"
             else:
                 # Strict superset check
                 missing_stones = False
@@ -158,7 +247,7 @@ def get_board_state():
                 elif len(new_stones) == 1:
                     r, c, p = new_stones[0]
                     if state.match_state != "in_game":
-                        state.error_msg = "Game is not active. Please Start/Reset the game."
+                        state.error_msg = "Game is not active. Please reset the game."
                         state.invalid_stones = [[r, c]]
                     elif (state.turn == "human" and p != 1) or (state.turn == "robot" and p != 2):
                         state.error_msg = f"Wrong token inserted! Expected Player {1 if state.turn == 'human' else 2} ({state.turn})."
@@ -178,9 +267,7 @@ def get_board_state():
                         else:
                             if state.turn == "human":
                                 state.turn = "robot"
-                                if state.ai_enabled and state.robot_state == "idle":
-                                    thread = threading.Thread(target=execute_robot_move, daemon=True)
-                                    thread.start()
+                                start_robot_move()
                             else:
                                 state.turn = "human"
                                 state.robot_state = "idle"
@@ -204,6 +291,7 @@ def get_board_state():
         "invalid_stones": state.invalid_stones,
         "debounce_time": state.debounce_time,
         "ai_enabled": state.ai_enabled,
+        "difficulty": robot_controller.difficulty_name,
         "robot_target_col": state.robot_target_col
     })
 
@@ -236,19 +324,13 @@ def player_move():
         state.robot_target_col = None
     else:
         state.turn = "robot"
-        if state.ai_enabled and state.robot_state == "idle":
-            thread = threading.Thread(target=execute_robot_move, daemon=True)
-            thread.start()
-            
+        start_robot_move()
+
     return jsonify({"status": "success", "board": state.internal_board})
 
 def execute_robot_move():
     print(f"\n[AI] execute_robot_move triggered. AI Enabled: {state.ai_enabled}")
-    if not state.ai_enabled:
-        return
-        
-    state.robot_state = "analyzing"
-    
+
     # Wait until the physical board is valid before computing a move
     if state.error_msg is not None:
         print("[AI] Physical board in error state. Waiting...")
@@ -285,11 +367,10 @@ def execute_robot_move():
 def trigger_robot_move():
     if state.turn != "robot" or not state.ai_enabled:
         return jsonify({"error": "Not robot's turn or AI disabled"}), 400
-    
-    # Start a background thread to execute the move without blocking the HTTP response
-    thread = threading.Thread(target=execute_robot_move, daemon=True)
-    thread.start()
-    
+
+    if not start_robot_move():
+        return jsonify({"status": "already computing"})
+
     return jsonify({"status": "started computation"})
 
 @app.route("/api/config", methods=["POST"])
@@ -319,7 +400,8 @@ def update_config():
             state.debounce_time = float(data["debounce_time"])
         except ValueError:
             pass
-            
+
+    save_settings()
     return jsonify({"status": "success"})
 
 @app.route("/api/reset", methods=["POST"])
@@ -329,14 +411,6 @@ def reset_game():
     state.turn = "human"
     state.robot_state = "idle"
     state.robot_target_col = None
-    state.game_over = False
-    state.winner = None
-    state.match_state = "idle"
-    return jsonify({"status": "success"})
-
-@app.route("/api/start", methods=["POST"])
-def start_game():
-    # In the future this can be expanded, for now it ensures game state is active
     state.game_over = False
     state.winner = None
     state.match_state = "in_game"

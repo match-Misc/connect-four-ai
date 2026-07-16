@@ -12,16 +12,18 @@ except ImportError as e:
     Difficulty = None
     Position = None
 
+DIFFICULTY_NAMES = ("easy", "medium", "hard", "impossible")
+
 class RobotController:
-    def __init__(self, simulate: bool = True):
+    def __init__(self, simulate: bool = True, difficulty: str = "medium"):
         self.simulate = simulate
-        
+
         # AI Player
         self.ai_player = None
         self.difficulty = None
-        if AIPlayer:
-            self.set_difficulty("medium")
-            
+        self.difficulty_name = "medium"
+        self.set_difficulty(difficulty)
+
         # Robot Server TCP
         self.robot_server_host = os.environ.get("C4_SERVER_HOST", "0.0.0.0")
         self.robot_server_port = int(os.environ.get("C4_SERVER_PORT", "30020"))
@@ -36,6 +38,10 @@ class RobotController:
             self.start_robot_server()
 
     def set_difficulty(self, diff_str: str):
+        name = str(diff_str).lower()
+        if name not in DIFFICULTY_NAMES:
+            name = "medium"
+        self.difficulty_name = name
         if not AIPlayer:
             return
         diff_map = {
@@ -44,7 +50,7 @@ class RobotController:
             "hard": Difficulty.HARD,
             "impossible": Difficulty.IMPOSSIBLE
         }
-        self.difficulty = diff_map.get(diff_str.lower(), Difficulty.MEDIUM)
+        self.difficulty = diff_map[name]
         self.ai_player = AIPlayer(self.difficulty)
 
     def get_ai_move(self, board_state: List[List[int]]) -> Optional[int]:
@@ -77,6 +83,8 @@ class RobotController:
             return None
 
     def start_robot_server(self):
+        if self.robot_server_running:
+            return
         try:
             self.robot_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.robot_server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

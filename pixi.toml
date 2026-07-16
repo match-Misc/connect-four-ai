@@ -10,7 +10,7 @@ calibrate = "python computer-vision/calibration/calibration_server.py"
 build-frontend = "cd computer-vision/calibration/frontend && npm install && npm run build"
 start-backend = "cd robot-game/backend && flask --app main run --host 0.0.0.0 --port 8000"
 start-frontend = "cd robot-game/frontend && npm run dev -- --host"
-game = "bash -c '(cd robot-game/backend && flask --app main run --host 0.0.0.0 --port 8000) & (cd robot-game/frontend && npm run dev -- --host)'"
+game = "bash scripts/run-game.sh"
 
 [dependencies]
 python = ">=3.14.6,<3.15"

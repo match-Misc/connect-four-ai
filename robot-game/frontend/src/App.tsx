@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { cn } from './utils';
 import { ConnectFourGrid } from './components/ConnectFourGrid';
@@ -10,16 +10,19 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [board, setBoard] = useState<number[][]>(Array(6).fill(Array(7).fill(0)));
   const [turn, setTurn] = useState<string>('human');
   const [robotState, setRobotState] = useState<string>('idle');
-  const [simulationMode, setSimulationMode] = useState<boolean>(true);
+  const [simulationMode, setSimulationMode] = useState<boolean>(false);
   const [difficulty, setDifficulty] = useState<string>('medium');
   const [gameOver, setGameOver] = useState<boolean>(false);
   const [winner, setWinner] = useState<number | null>(null);
-  const [matchState, setMatchState] = useState<string>('idle');
+  const [matchState, setMatchState] = useState<string>('in_game');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [invalidStones, setInvalidStones] = useState<number[][]>([]);
-  const [debounceTime, setDebounceTime] = useState<number>(1.0);
+  const [debounceTime, setDebounceTime] = useState<number>(0.5);
   const [aiEnabled, setAiEnabled] = useState<boolean>(true);
   const [robotTargetCol, setRobotTargetCol] = useState<number | null>(null);
+  // Until the first board-state response lands, our config values are placeholders
+  // rather than the persisted ones — posting them would overwrite the saved session.
+  const hydrated = useRef(false);
 
   const fetchBoardState = async () => {
     try {
@@ -31,7 +34,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       setSimulationMode(data.simulation_mode);
       setGameOver(data.game_over || false);
       setWinner(data.winner || null);
-      setMatchState(data.match_state || 'idle');
+      setMatchState(data.match_state || 'in_game');
       setErrorMsg(data.error_msg || null);
       setInvalidStones(data.invalid_stones || []);
       if (data.debounce_time !== undefined) {
@@ -40,13 +43,18 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       if (data.ai_enabled !== undefined) {
         setAiEnabled(data.ai_enabled);
       }
+      if (data.difficulty !== undefined) {
+        setDifficulty(data.difficulty);
+      }
       setRobotTargetCol(data.robot_target_col ?? null);
+      hydrated.current = true;
     } catch (e) {
       console.error('Failed to fetch board state:', e);
     }
   };
 
   useEffect(() => {
+    fetchBoardState();
     const interval = setInterval(fetchBoardState, 1000);
     return () => clearInterval(interval);
   }, []);
@@ -94,6 +102,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   };
 
   useEffect(() => {
+    if (!hydrated.current) return;
     updateConfig();
   }, [simulationMode, difficulty, debounceTime, aiEnabled]);
 
@@ -102,7 +111,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       <div className="w-full px-4 xl:px-8 flex flex-col gap-4 h-full">
         
         {/* Header */}
-        <header className="flex flex-col 2xl:flex-row justify-between items-center bg-white p-4 lg:p-6 rounded-2xl shadow-sm border border-gray-100 gap-4 shrink-0">
+        <header className="flex flex-col 2xl:flex-row portrait:2xl:flex-col justify-between items-center bg-white p-4 lg:p-6 portrait:p-4 rounded-2xl shadow-sm border border-gray-100 gap-4 portrait:gap-3 shrink-0">
           <div className="flex items-center gap-4">
             <img src="/match_NUR_Logo_10pt.svg" alt="Match Logo" className="h-10" onError={(e) => (e.currentTarget.style.display = 'none')} />
             <div className="flex flex-col">
@@ -118,7 +127,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
             </div>
           </div>
           
-          <div className="flex flex-wrap items-center justify-center gap-4 lg:gap-6 w-full 2xl:w-auto">
+          <div className="flex flex-wrap items-center justify-center gap-4 lg:gap-6 w-full 2xl:w-auto portrait:2xl:w-full">
             {/* Difficulty Selector */}
             <div className="flex bg-gray-100 p-1 rounded-lg">
               {['easy', 'medium', 'hard', 'impossible'].map(level => (
@@ -137,15 +146,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
 
             {/* Game Controls */}
             <div className="flex gap-2">
-              <button 
-                onClick={async () => {
-                  await fetch(`${API_BASE}/start`, { method: 'POST' });
-                }}
-                className="bg-brand-green hover:bg-[#7a8a14] text-white px-4 py-2 lg:px-6 lg:py-2 rounded-lg text-sm font-bold transition-colors shadow-sm"
-              >
-                Start Game
-              </button>
-              <button 
+              <button
                 onClick={async () => {
                   await fetch(`${API_BASE}/reset`, { method: 'POST' });
                 }}
@@ -157,12 +158,11 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-4">
-            <span className={cn("px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider whitespace-nowrap", 
-              matchState === 'idle' ? 'bg-gray-100 text-gray-500 border border-gray-200' :
+            <span className={cn("px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider whitespace-nowrap",
               matchState === 'in_game' ? 'bg-blue-100 text-blue-700 border border-blue-200 shadow-sm' :
               'bg-yellow-100 text-yellow-800 border border-yellow-300 shadow-sm'
             )}>
-              {matchState === 'idle' ? 'Waiting to Start' : matchState === 'in_game' ? 'In Game' : 'Finished'}
+              {matchState === 'in_game' ? 'In Game' : 'Finished'}
             </span>
             <div className={cn(
               "flex items-center gap-2 px-3 py-2 lg:px-4 lg:py-2 rounded-full font-bold text-sm transition-colors whitespace-nowrap",
@@ -205,7 +205,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
           )}
           
           <div className="w-full flex-1 flex justify-center items-center min-h-0">
-            <div className="h-full max-w-full aspect-[7/6] transition-all duration-300 ease-in-out">
+            <div className="aspect-[7/6] h-full w-auto max-w-full portrait:h-auto portrait:w-full portrait:max-h-full transition-all duration-300 ease-in-out">
               <ConnectFourGrid 
                 board={board} 
                 onColumnClick={handleColumnClick}
@@ -218,9 +218,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
 
           {/* Debug View Content */}
           {showDebug && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full mt-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 portrait:grid-cols-1 gap-6 w-full mt-8">
               
-              <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
+              <div className="lg:col-span-2 portrait:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                   <Activity size={20} className="text-purple-500" /> Vision Feed
                 </h2>

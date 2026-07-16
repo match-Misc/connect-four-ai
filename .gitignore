@@ -21,6 +21,9 @@ __pycache__/
 # calibration
 calibration.json
 
+# runtime settings persisted by the robot-game backend
+robot-game/backend/settings.json
+
 # AI Code Prep
 .aicodeprep-gui
 fullcode.txt# pixi environments

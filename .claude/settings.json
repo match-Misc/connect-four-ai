@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast,sys; ast.parse\\(open\\('main.py'\\).read\\(\\)\\)\")",
+      "Bash(pixi run *)",
+      "Bash(rm -rf /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/dba48cca-daa3-47b8-9dd8-e021e33b323f/scratchpad/buggy)",
+      "Bash(mkdir -p /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/dba48cca-daa3-47b8-9dd8-e021e33b323f/scratchpad/buggy)",
+      "Bash(cp robot-game/backend/main.py /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/dba48cca-daa3-47b8-9dd8-e021e33b323f/scratchpad/buggy/main.py)",
+      "Bash(python3 -)",
+      "Bash(sed -i 's|BACKEND = .*|BACKEND = \"/tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/dba48cca-daa3-47b8-9dd8-e021e33b323f/scratchpad/buggy\"|' /tmp/claude-1000/-home-match-vier-gewinnt-connect-four-ai/dba48cca-daa3-47b8-9dd8-e021e33b323f/scratchpad/test_buggy.py)",
+      "Bash(ps -o pid,ppid,stat,cmd -p 33004,33017)",
+      "Bash(pixi run python -c ' *)",
+      "Bash(chmod +x /home/match-vier-gewinnt/connect-four-ai/scripts/run-game.sh)",
+      "Bash(ss -ltnp 2>/dev/null | grep -E ':8000|:5173' || echo \"ports free\" *)",
+      "Read(//var/crash/**)",
+      "Bash(ls -la --time-style=full-iso /var/crash/ 2>/dev/null *)",
+      "Bash(kill -KILL 35040)"
+    ]
+  }
+}
