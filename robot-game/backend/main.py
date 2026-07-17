@@ -96,6 +96,15 @@ class GameState:
         self.robot_target_col = None
         # Guards the idle -> analyzing transition so only one move thread runs.
         self.robot_move_lock = threading.Lock()
+        # True once the robot has been told to pick up a token and has not yet
+        # dropped it. Survives a reset: the token is in the gripper either way.
+        self.robot_stone_requested = False
+        # True once the robot ACKED the grab (sent GRABBED). The column of a
+        # move is held back until then, so the grab code and the column can
+        # never sit unread in the pendant's buffer together -- without
+        # terminators it would read them as one garbled message. Survives a
+        # reset for the same reason as robot_stone_requested.
+        self.robot_stone_held = False
 
 state = GameState(settings)
 
@@ -107,8 +116,19 @@ def difficulty_toggle_allowed():
 def on_difficulty_changed(name):
     save_settings()
 
+def on_robot_connected():
+    # The pendant program is back at the top of its loop with an empty gripper,
+    # so any token we think it grabbed before the restart is gone.
+    state.robot_stone_requested = False
+    state.robot_stone_held = False
+
+def on_stone_grabbed():
+    state.robot_stone_held = True
+
 robot_controller.difficulty_toggle_guard = difficulty_toggle_allowed
 robot_controller.on_difficulty_changed = on_difficulty_changed
+robot_controller.on_robot_connected = on_robot_connected
+robot_controller.on_stone_grabbed = on_stone_grabbed
 # Defined further down; the robot's reset button does exactly what the web UI's
 # reset button does.
 robot_controller.on_reset_requested = lambda: reset_game_state()
@@ -280,13 +300,21 @@ def process_board_update():
                         state.internal_board = merged_board
                         state.error_msg = None
                         state.invalid_stones = []
-                        
+
+                        if p == 2:
+                            # The token the robot was holding is now on the
+                            # board, so it needs a new one -- unless the game
+                            # ends right here, which the check below decides.
+                            state.robot_stone_requested = False
+                            state.robot_stone_held = False
+
                         winner = check_winner(merged_board)
                         if winner is not None:
                             state.game_over = True
                             state.winner = winner
                             state.match_state = "finished"
                             state.robot_target_col = None
+                            robot_controller.send_game_result(robot_won=(winner == 2))
                         else:
                             if state.turn == "human":
                                 state.turn = "robot"
@@ -303,10 +331,25 @@ def process_board_update():
                     state.invalid_stones = []
 
 
+def maintain_robot_stone():
+    """Keep a token in the robot's gripper while a game is running.
+
+    Driven from the detection loop rather than from the turn change alone, so a
+    signal that did not reach the robot (not connected yet, socket busy) is just
+    retried on the next pass instead of leaving it empty-handed forever.
+    """
+    if state.game_over or state.match_state != "in_game":
+        return
+    if state.robot_stone_requested:
+        return
+    state.robot_stone_requested = robot_controller.send_game_continues()
+
+
 def detection_loop():
     while True:
         try:
             process_board_update()
+            maintain_robot_stone()
         except Exception as e:
             print(f"[detection] error: {e}")
         time.sleep(0.02)
@@ -359,6 +402,7 @@ def player_move():
         state.winner = winner
         state.match_state = "finished"
         state.robot_target_col = None
+        robot_controller.send_game_result(robot_won=(winner == 2))
     else:
         state.turn = "robot"
         start_robot_move()
@@ -393,8 +437,23 @@ def execute_robot_move():
     
     # Execute movement (either TCP or wait for manual drop)
     if not state.simulation_mode:
+        # Handshake: hold the column back until the robot confirmed the grab,
+        # even if the human answered before it reached the pickup station.
+        start = time.time()
+        warned = False
+        while not state.robot_stone_held:
+            if state.game_over or state.match_state != "in_game" or state.robot_state != "moving":
+                # Reset or board cleared while waiting; this move is stale.
+                if state.robot_state == "moving":
+                    state.robot_state = "idle"
+                state.robot_target_col = None
+                return
+            if not warned and time.time() - start > 15:
+                print("[AI] Still waiting for the robot's GRABBED ack -- is the pendant program sending it?")
+                warned = True
+            time.sleep(0.05)
         robot_controller.send_robot_column(best_move)
-        
+
     state.robot_state = "waiting_for_drop"
     # Thread now exits! `get_board_state` will naturally advance the turn when the physical token is detected.
 

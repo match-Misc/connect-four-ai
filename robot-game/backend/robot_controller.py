@@ -15,12 +15,21 @@ except ImportError as e:
 
 DIFFICULTY_NAMES = ("easy", "medium", "hard", "impossible")
 
-# What the robot's button threads send. No terminator: the robot's keepalives
-# have none either, so a token has to stand on its own in the stream.
+# What the robot sends us: button events, plus the GRABBED handshake ack after
+# it picked up a token. No terminator: the robot's keepalives have none either,
+# so a token has to stand on its own in the stream.
 TOGGLE_TOKEN = b"TOGGLE"
 RESET_TOKEN = b"RESET"
-ROBOT_TOKENS = (TOGGLE_TOKEN, RESET_TOKEN)
+GRABBED_TOKEN = b"GRABBED"
+ROBOT_TOKENS = (TOGGLE_TOKEN, RESET_TOKEN, GRABBED_TOKEN)
 MAX_TOKEN_LEN = max(len(t) for t in ROBOT_TOKENS)
+
+# What we send the robot: one ASCII digit, no terminator. "1".."7" are the
+# target column; the codes below drive the rest of its loop, and are single
+# characters so the pendant can read them with the same call as a column.
+GRAB_CODE = "8"  # game is running -- pick up a token for the next move
+WIN_CODE = "9"  # robot won -- celebrate
+LOSE_CODE = "0"  # human won, or a draw -- no celebration
 
 class RobotController:
     def __init__(self, simulate: bool = True, difficulty: str = "medium"):
@@ -52,6 +61,17 @@ class RobotController:
         # Reset button on the robot. Unguarded on purpose, to match the reset
         # button in the web UI: a reset must work whatever state we are in.
         self.on_reset_requested: Optional[Callable[[], None]] = None
+
+        # A new connection means the pendant program restarted, so whatever we
+        # believe about the token in its gripper no longer holds.
+        self.on_robot_connected: Optional[Callable[[], None]] = None
+
+        # GRABBED handshake: fired when the robot confirms it picked up a
+        # token. The column for a move is only released after this ack, so the
+        # pendant never has the grab code and a column unread in its buffer at
+        # the same time -- with no terminators it would read them as one
+        # garbled message and act on neither.
+        self.on_stone_grabbed: Optional[Callable[[], None]] = None
 
         if not self.simulate:
             self.start_robot_server()
@@ -164,20 +184,15 @@ class RobotController:
                     threading.Thread(
                         target=self.robot_reader_loop, args=(conn,), daemon=True
                     ).start()
-                    with self.robot_conn_lock:
-                        pending = self.pending_column
-                        send_conn = self.robot_client_socket
-                        self.pending_column = None
-                        
-                    if pending is not None and send_conn:
+                    if self.on_robot_connected:
                         try:
-                            msg = str(int(pending)).encode("ascii")
-                            send_conn.send(msg)
-                            print(f"Sent pending column to robot: {pending}")
+                            self.on_robot_connected()
                         except Exception as e:
-                            print(f"Failed to send pending column: {e}")
-                            with self.robot_conn_lock:
-                                self.pending_column = pending
+                            print(f"on_robot_connected callback failed: {e}")
+                    # A queued column is NOT flushed here: the pendant just
+                    # restarted with an empty gripper, so it first has to be
+                    # told to grab again. Delivery happens when its GRABBED
+                    # ack arrives (handle_stone_grabbed).
 
             self.robot_server_thread = threading.Thread(target=accept_loop, daemon=True)
             self.robot_server_thread.start()
@@ -246,6 +261,32 @@ class RobotController:
             self.toggle_difficulty()
         elif token == RESET_TOKEN:
             self.request_reset()
+        elif token == GRABBED_TOKEN:
+            self.handle_stone_grabbed()
+
+    def handle_stone_grabbed(self):
+        print("Robot confirmed token grab")
+        if self.on_stone_grabbed:
+            try:
+                self.on_stone_grabbed()
+            except Exception as e:
+                print(f"on_stone_grabbed callback failed: {e}")
+
+        # The ack proves the robot holds a token and is back at its read call
+        # with an empty buffer, so a column queued while it was away (or
+        # restarting) can go out now.
+        with self.robot_conn_lock:
+            pending = self.pending_column
+            self.pending_column = None
+            conn = self.robot_client_socket
+        if pending is not None and conn:
+            try:
+                conn.send(str(int(pending)).encode("ascii"))
+                print(f"Sent queued column to robot after grab ack: {pending}")
+            except Exception as e:
+                print(f"Failed to send queued column: {e}")
+                with self.robot_conn_lock:
+                    self.pending_column = pending
 
     def request_reset(self):
         if self.on_reset_requested is None:
@@ -318,6 +359,43 @@ class RobotController:
             with self.robot_conn_lock:
                 self.pending_column = col_to_send
                 self.robot_client_socket = None
+
+    def send_robot_signal(self, code: str, label: str) -> bool:
+        """Send a one-character game-flow signal; report whether it landed.
+
+        Nothing is queued here, unlike a column: the caller re-sends a signal it
+        could not deliver, which keeps a signal from before the robot connected
+        out of the stream instead of arriving behind a stale column.
+        """
+        if self.simulate:
+            print(f"Simulating robot signal: {label}")
+            return True
+
+        with self.robot_conn_lock:
+            conn = self.robot_client_socket
+        if not conn:
+            return False
+
+        try:
+            conn.send(code.encode("ascii"))
+        except (BlockingIOError, TimeoutError):
+            return False
+        except Exception as e:
+            print(f"Disconnected while sending {label}: {e}")
+            self.drop_robot_connection(conn)
+            return False
+
+        print(f"Sent {label} to robot: {code}")
+        return True
+
+    def send_game_continues(self) -> bool:
+        """Tell the robot to pick up a token for its next move."""
+        return self.send_robot_signal(GRAB_CODE, "grab token")
+
+    def send_game_result(self, robot_won: bool) -> bool:
+        if robot_won:
+            return self.send_robot_signal(WIN_CODE, "win")
+        return self.send_robot_signal(LOSE_CODE, "loss")
 
     def __del__(self):
         if not self.simulate:
