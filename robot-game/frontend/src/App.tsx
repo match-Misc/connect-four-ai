@@ -54,7 +54,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
 
   useEffect(() => {
     fetchBoardState();
-    const interval = setInterval(fetchBoardState, 1000);
+    // The backend advances detection on its own thread now, so this only sets
+    // how fast the GUI catches up to it.
+    const interval = setInterval(fetchBoardState, 150);
     return () => clearInterval(interval);
   }, []);
 

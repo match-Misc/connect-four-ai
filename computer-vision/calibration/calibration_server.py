@@ -614,8 +614,10 @@ class UnifiedCalibrator:
             with open(filename, "w") as f:
                 json.dump(settings, f, indent=4)
             self.status_text = "RealSense settings saved"
+            return True
         except Exception as e:
             self.status_text = f"Save failed: {e}"
+            return False
 
     def reset_corners(self):
         self.corners = []
@@ -766,20 +768,10 @@ def toggle_occupancy():
 
 @app.route('/api/save_realsense', methods=['POST'])
 def save_realsense():
-    settings = {
-        "exposure": calibrator.exposure,
-        "gain": calibrator.gain,
-        "laser_power": calibrator.laser_power,
-        "visual_preset": calibrator.visual_preset,
-        "min_depth_mm": calibrator.min_depth,
-        "max_depth_mm": calibrator.max_depth,
-        "emitter_enabled": calibrator.emitter,
-        "auto_exposure": 0
-    }
-    with open("../config/calibrate_realsense.json", "w") as f:
-        json.dump(settings, f, indent=4)
-    calibrator.status_text = "RealSense settings saved"
-    return jsonify({'status': calibrator.status_text})
+    success = calibrator.save_realsense_calibration()
+    if success:
+        return jsonify({'status': calibrator.status_text})
+    return jsonify({'status': 'failed', 'message': calibrator.status_text}), 400
 
 @app.route('/api/calibrate_colors', methods=['POST'])
 def calibrate_colors():

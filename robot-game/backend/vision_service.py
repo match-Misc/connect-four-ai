@@ -51,6 +51,12 @@ class VisionService:
         self.current_raw_depth_frame = None
         self.capture_thread = None
 
+        # Detection runs on the capture thread so the depth history advances at
+        # camera rate. Feeding it from get_board_state() instead made the
+        # smoothing window depend on how often callers polled.
+        self.board_lock = threading.Lock()
+        self.latest_board = [[0 for _ in range(7)] for _ in range(6)]
+
         self.load_calibration()
         self.load_realsense_calibration()
 
@@ -158,9 +164,12 @@ class VisionService:
                     with self.frame_lock:
                         self.current_color_frame = c_frame.copy()
                         self.current_raw_depth_frame = raw_d.copy()
+
+                    detected = self._detect_board()
+                    with self.board_lock:
+                        self.latest_board = detected
                 except Exception:
                     pass
-                time.sleep(0.01)
 
         self.capture_thread = threading.Thread(target=capture_loop, daemon=True)
         self.capture_thread.start()
@@ -213,9 +222,15 @@ class VisionService:
         return frame
 
     def get_board_state(self) -> List[List[int]]:
-        # Returns a 6x7 array: 0 for empty, 1 for player1, 2 for player2
+        # Returns the most recent detection: a 6x7 array, 0 empty / 1 player1 /
+        # 2 player2. Cheap and side-effect free -- callers may poll it freely.
+        with self.board_lock:
+            return [row[:] for row in self.latest_board]
+
+    def _detect_board(self) -> List[List[int]]:
+        # Runs on the capture thread only: mutates hole_depth_history.
         board = [[0 for _ in range(7)] for _ in range(6)]
-        
+
         if len(self.corners) != 4 or not self.calibration_complete:
             return board
 

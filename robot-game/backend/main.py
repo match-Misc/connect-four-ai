@@ -193,10 +193,13 @@ def merge_boards(cv_board, virtual_board):
             res[r][c] = cv_board[r][c] or virtual_board[r][c]
     return res
 
-@app.route("/api/board-state", methods=["GET"])
-def get_board_state():
+def process_board_update():
+    # Advances the detection state machine one step. Driven by detection_loop()
+    # rather than by the board-state request handler: when this ran inside the
+    # handler, the debounce could only elapse across two polls, so a 0.2s
+    # debounce cost a full poll interval (1s) or more before the robot started.
     cv_board = vision_service.get_board_state()
-    
+
     # If physical board is completely cleared, reset the virtual board too
     if count_tokens(cv_board) == 0:
         state.virtual_board = [[0 for _ in range(7)] for _ in range(6)]
@@ -299,6 +302,20 @@ def get_board_state():
                     state.error_msg = None
                     state.invalid_stones = []
 
+
+def detection_loop():
+    while True:
+        try:
+            process_board_update()
+        except Exception as e:
+            print(f"[detection] error: {e}")
+        time.sleep(0.02)
+
+threading.Thread(target=detection_loop, daemon=True).start()
+
+@app.route("/api/board-state", methods=["GET"])
+def get_board_state():
+    # Pure read of state; the detection thread owns the transitions.
     return jsonify({
         "board": state.internal_board,
         "turn": state.turn,
@@ -355,10 +372,8 @@ def execute_robot_move():
     if state.error_msg is not None:
         print("[AI] Physical board in error state. Waiting...")
     while state.error_msg is not None:
-        time.sleep(0.5)
-        
-    time.sleep(0.5) # Fake delay for UI
-    
+        time.sleep(0.1)
+
     state.robot_state = "thinking"
     board_for_ai = state.internal_board
     if not state.simulation_mode:
