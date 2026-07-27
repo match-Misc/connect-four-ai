@@ -27,7 +27,7 @@ INSERT REAL IMAGE OF THE GAME ON THE MIR ROBOT
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
-### Cabeling
+## Cabeling
 1. Get multi Steckdose near the MuR620 for the MuR620, NUC and monitor
 2. Plugin all three devices using the appropriate cables from the grey box
 3. Connect keyboard and mouse to the NUC
