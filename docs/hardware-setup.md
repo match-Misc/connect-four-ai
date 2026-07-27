@@ -1,0 +1,121 @@
+# Hardware Setup
+
+## Positioning the MuR620
+
+The first step is to bring the MuR620 to its designated operating location. This is done by manually moving the robot. For detailed instructions, see: [Manually Moving the MuR620](./basic-skills.md#manually-moving-the-mur620).
+
+**Important Notes Regarding the Location:**
+- Avoid placing the setup in front of very bright or overexposed backgrounds, as this may interfere with the camera's image recognition.
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+## Mounting of hardware components
+To ensure the robot program works without modifications, all hardware components **must be mounted at the exact same screw holes**. 
+The image below shows a top view of the MuR620 and its mounting grid plate. Please pay attention to the orientation: **the right side of the image is the front** of the robot. 
+
+<img src="./images/connect-four-mounting-layout-top-view.png" alt="Connect Four Mounting Layout Top View" width="600" />
+
+Ideally, you should start counting the holes on the grid plate from the bottom right edge to determine exactly which hole each component should be screwed into. For example, the front screw of the Connect Four board must be fastened in the first row, fourth column from the right.
+The components to be mounted on the plate are color-coded as follows:
+- 🟢 **Green (Connect Four Board)**: The surface with the black sticker must face the RealSense camera.
+- 🟣 **Purple (Chip Collection Tray)**: Prevents chips from falling onto the floor when the game board's gate is opened.
+- 🟠 **Orange (Black Chip Holder)**: The black chips are placed here in an orderly fashion so the robot can pick them up.
+- 🔴 **Red (RealSense Camera Mount)**: The slanted sides must face away from the game board.
+- 🔵 **Blue (UR Robot Arm)**: The Universal Robot (UR) arm that is used to play the game.
+
+INSERT REAL IMAGE OF THE GAME ON THE MIR ROBOT
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+### Cabeling
+1. Get multi Steckdose near the MuR620 for the MuR620, NUC and monitor
+2. Plugin all three devices using the appropriate cables from the grey box
+3. Connect keyboard and mouse to the NUC
+4. Connect monitor to the NUC using the cables in the grey box
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+## Getting the NUC ready
+
+Before proceeding, ensure that the [Cabling](#cabling) is completed and all devices are powered on.
+
+1. Turn on the NUC by pressing its power button.
+2. When prompted, log in using the password: `match1234`.
+3. Open a new terminal window.
+4. Change into the project directory by running:
+   ```bash
+   cd connect-four-ai
+   ```
+   > If the `connect-four-ai` directory does not exist, please refer to the [Software Setup Guide](./software-setup.md) for instructions on how to prepare the environment and clone the repository.
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+## Calibrate the Camera for the Game
+1. Star tthe calibration by executing "pixi run calibrate" in the terminal
+2. 
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+## Start the Game
+1. Start the game by executing "pixi run game" in the terminal
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+## Getting the UR-robots ready
+Only one of the MuR620's robot arms is needed for the game; the other arm must be moved out of the way. In our setup, the UR10 on the left side of the MuR620 is designated as **UR10 1**, and the one on the right side is **UR10 2**.
+
+- **UR10 2** is not needed and must be parked safely to the side.
+- **UR10 1** is responsible for playing the game and will be equipped with the appropriate gripper and jaws.
+
+Detailed instructions are provided in the following steps:
+
+1. [Move UR10 2 to the Side](#move-ur10-2-to-the-side)
+2. [Mount Schunk Gripper to UR10 1](#mount-schunk-gripper-to-ur10-1)
+3. [Start UR program and move to initial pose](#start-ur-program-and-move-to-initial-pose)
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+### Move UR10 2 to the Side
+
+The **UR10 2** [INSERT IMAGE LINK HERE] is not used in the Connect Four game and must be moved out of the way so it doesn't interfere with **UR10 1**.
+
+**Prerequisites:**
+1. Make sure the MuR620 is turned on. See: [How to Turn On the MuR620](./basic-skills.md#how-to-turn-on-the-mur620)
+2. Make sure the UR is unlocked. See: [Unlocking the UR Robot](./basic-skills.md#unlocking-the-ur-robot)
+3. Familiarize yourself with moving the UR manually. See: [Moving the UR Robot](./basic-skills.md#moving-the-ur-robot)
+
+**Steps to move UR10 2:**
+1. Access the UR User Interface by switching through the KVM switch and ensure you are controlling **UR10 2**.
+2. Use the **Move** tab to jog UR10 2 safely to the side so that its workspace does not overlap with UR10 1.
+3. See reference image for a pose that does not interfere with the game
+INSERT IMAGE HERE
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+### Mount Schunk Gripper to UR10 1
+1. Look in the grey box for the two gripper jaws.
+INSERT IMAGE OF THE GRIPPER JAWS
+2. Mount the two gripper jaws to the Schunk gripper.
+3. The gripper has an aluminium plate on the back with four diagonal holes. REMOVE IT from the gripper by loosening the four screws on the back. 
+INSERT IMAGE SHOWING THE HOLES
+4. Mount the aluminium plate directly to the UR10 1 (see the image below).
+5. Mount the Schunk gripper to the aluminium plate. Using the diagonal holes going through the Schunk gripper 
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+
+### Start UR program and move to initial pose
+**Important:** Before proceeding, verify that the correct program and installation are loaded. See: [Load UR Installation and UR program](./basic-skills.md#load-ur-installation-and-ur-program).
+
+1. On the UR touch screen, tap the **"Program"** button in the top left corner.
+2. For safety, reduce the robot's speed by dragging the speed slider (at the bottom of the screen) down to approximately **20%**.
+3. Press the **"Play"** button located in the bottom right corner, then select **"Play from beginning: Robot Program"**.
+4. You will be prompted to move the robot to its starting position. 
+   - **Caution:** Make sure the robot's path is completely clear of obstacles.
+   - Press and hold the **"Move robot to: ..."** button. The robot will move *only* while you are holding the button.
+5. Once the robot reaches the start position, a prompt will appear. Tap **"Play from: Robot Program"** to fully start the program. 
+   - *Note:* The robot may immediately pick up a stone. This is normal behavior indicating it is successfully connected to the NUC and waiting for commands.
+
+The robot is now actively waiting for TCP commands from the NUC to determine where to place the stones.
+**The UR setup is now finished.**
+
+[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
