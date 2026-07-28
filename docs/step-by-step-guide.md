@@ -22,6 +22,7 @@ Follow these steps in order to set up the Connect Four game:
    - [Unlocking the UR Robot](./basic-skills.md#unlocking-the-ur-robot)
    - [Moving the UR Robot](./basic-skills.md#moving-the-ur-robot)
    - [Load UR Installation and UR program](./basic-skills.md#load-ur-installation-and-ur-program)
+10. [FAQ](./faq.md)
 
 ## Preparations
 Before starting the setup, the following items should be prepared:

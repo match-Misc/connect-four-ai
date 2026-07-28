@@ -51,9 +51,40 @@ Before proceeding, ensure that the [Cabling](#cabling) is completed and all devi
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
 ## Calibrate the Camera for the Game
-Each time the game is setup somewhere the calibration of the RealSense and the colors of the match-coins must be checked. Due to different lighting conditions the HSV values need to be adjusted. 
-1. Start the calibration by executing "pixi run calibrate" in the terminal
-2. 
+
+Each time the game is set up in a new location, the camera alignment and coin color detection must be calibrated to account for different lighting conditions.
+
+1. **Start the Calibration Server:**
+   - Open a terminal and run `pixi run calibrate`.
+   - Open your web browser and navigate to: [http://127.0.0.1:5000/](http://127.0.0.1:5000/)
+
+2. **Step 1: Define Game Board:**
+   - Check if the camera image aligns with the physical game board.
+   - If no markers are visible, click in the middle of the four corner holes to define the grid.
+   - If markers exist but are misaligned, click near the corners to adjust their position so all 42 holes are correctly aligned.
+   - Click **Save Corners** when finished.
+
+3. **Step 2: RealSense Calibration:**
+   - Switch to the RealSense Calibration tab.
+   - Under **Manual Overrides**, ensure the Visual Preset is set to `3` (High Accuracy).
+   - Check the depth feed to ensure all empty holes are identified cleanly.
+   - If the depth readings are noisy or unsteady, use the **Auto Calibration** tool. (Note: configuring a wider sweep range will take longer). Once complete, it will apply the best hardware settings.
+   - Click **Save Profile**.
+
+4. **Step 3: Color Calibration:**
+   - Switch to the Color Calibration tab.
+   - Place Player 1 and Player 2 stones in the highlighted columns as instructed on the screen.
+   - Click **Calibrate Colors** to automatically detect the color profiles.
+   - Click **Save Colors**.
+
+5. **Step 4: Detection Calibration:**
+   - Switch to the Detection Calibration tab.
+   - Test by dropping a few stones into different locations and verifying the system detects them reliably.
+   - If open slots are incorrectly marked as closed (or vice versa), adjust the **Occupancy Threshold** and **Temporal Smoothing** until detection is perfectly stable.
+   - Click **Save Detection Config**.
+
+> **Important:**
+> Calibration is iterative. Sometimes you may need to go back to a previous step (e.g., tweaking the RealSense depth settings or board geometry) to get the best results in the final Detection phase.
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
