@@ -263,11 +263,10 @@ def process_board_update():
                 # robot is idle again -- without this, start_robot_move() would
                 # refuse to ever run again.
                 state.robot_state = "idle"
-                if state.game_over:
-                    state.game_over = False
-                    state.winner = None
-                    state.turn = "human"
-                    state.match_state = "in_game"
+                state.game_over = False
+                state.winner = None
+                state.turn = "human"
+                state.match_state = "in_game"
             else:
                 # Strict superset check
                 missing_stones = False
@@ -372,7 +371,8 @@ def get_board_state():
         "debounce_time": state.debounce_time,
         "ai_enabled": state.ai_enabled,
         "difficulty": robot_controller.difficulty_name,
-        "robot_target_col": state.robot_target_col
+        "robot_target_col": state.robot_target_col,
+        "tcp_connected": robot_controller.is_robot_connected
     })
 
 @app.route("/api/player-move", methods=["POST"])

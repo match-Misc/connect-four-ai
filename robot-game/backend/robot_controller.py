@@ -326,6 +326,13 @@ class RobotController:
         if self.robot_server_thread and self.robot_server_thread.is_alive():
             self.robot_server_thread.join(timeout=2)
 
+    @property
+    def is_robot_connected(self) -> bool:
+        if self.simulate:
+            return True
+        with self.robot_conn_lock:
+            return self.robot_client_socket is not None
+
     def send_robot_column(self, col: int):
         if self.simulate:
             print(f"Simulating robot move to column {col}")

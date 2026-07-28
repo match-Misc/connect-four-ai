@@ -27,11 +27,14 @@ INSERT REAL IMAGE OF THE GAME ON THE MIR ROBOT
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
-## Cabeling
-1. Get multi Steckdose near the MuR620 for the MuR620, NUC and monitor
-2. Plugin all three devices using the appropriate cables from the grey box
-3. Connect keyboard and mouse to the NUC
-4. Connect monitor to the NUC using the cables in the grey box
+## Cabling and Power Supply
+
+To ensure all hardware components are properly powered and connected, follow these steps:
+
+1. **Prepare Power Supply:** Place a multi-socket extension cord near the MuR620. This will provide power to the MuR620, the NUC (mini PC), and the monitor.
+2. **Connect Power Cables:** Retrieve the appropriate power cables from the grey equipment box and plug the MuR620, NUC, and monitor into the extension cord.
+3. **Connect Peripherals:** Plug the keyboard and mouse into the USB ports on the NUC.
+4. **Connect the Monitor:** Use the provided display cable from the grey equipment box to connect the monitor to the NUC.
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 

@@ -7,6 +7,32 @@ import { Activity, Bot, User, Settings2, Bug, Gamepad2 } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
 
+function RobotArmIcon({ size = 24, className = "" }: { size?: number, className?: string }) {
+  return (
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round" 
+      className={className}
+    >
+      <path d="M6 22h12" />
+      <path d="M9 22v-3a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v3" />
+      <circle cx="12" cy="14" r="2" />
+      <path d="M12 12L9.5 7" />
+      <circle cx="9" cy="6" r="2" />
+      <path d="M10 5L15 4" />
+      <circle cx="16" cy="4" r="1.5" />
+      <path d="M17.5 4h2" />
+      <path d="M19.5 3v2" />
+    </svg>
+  );
+}
+
 function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [board, setBoard] = useState<number[][]>(Array(6).fill(Array(7).fill(0)));
   const [turn, setTurn] = useState<string>('human');
@@ -20,6 +46,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [debounceTime, setDebounceTime] = useState<number>(0.5);
   const [aiEnabled, setAiEnabled] = useState<boolean>(true);
   const [robotTargetCol, setRobotTargetCol] = useState<number | null>(null);
+  const [tcpConnected, setTcpConnected] = useState<boolean>(false);
   // Until the first board-state response lands, our config values are placeholders
   // rather than the persisted ones — posting them would overwrite the saved session.
   const hydrated = useRef(false);
@@ -44,6 +71,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       }
       if (data.difficulty !== undefined) {
         setDifficulty(data.difficulty);
+      }
+      if (data.tcp_connected !== undefined) {
+        setTcpConnected(data.tcp_connected);
       }
       setRobotTargetCol(data.robot_target_col ?? null);
       hydrated.current = true;
@@ -118,13 +148,23 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
             <img src="/match_NUR_Logo_10pt.svg" alt="Match Logo" className="h-14 lg:h-20" onError={(e) => (e.currentTarget.style.display = 'none')} />
             <div className="flex flex-col">
               <h1 className="text-2xl lg:text-4xl font-bold text-gray-800 dark:text-gray-100 tracking-tight whitespace-nowrap">Connect Four AI</h1>
-              <div className="flex gap-5 mt-1.5">
+              <div className="flex gap-5 mt-1.5 items-center">
                 <Link to="/game" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", !showDebug ? "text-brand-green" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
                   <Gamepad2 size={18} /> Play
                 </Link>
                 <Link to="/debugging" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", showDebug ? "text-purple-600 dark:text-purple-400" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
                   <Bug size={18} /> Debug
                 </Link>
+                <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />
+                <div className="flex items-center gap-1.5" title={tcpConnected ? "Robot Connected" : "Robot Disconnected"}>
+                  <RobotArmIcon size={16} className="text-gray-500 dark:text-gray-400" />
+                  <span 
+                    className={cn(
+                      "w-2 h-2 rounded-full",
+                      tcpConnected ? "bg-green-500" : "bg-red-500"
+                    )}
+                  />
+                </div>
               </div>
             </div>
           </div>

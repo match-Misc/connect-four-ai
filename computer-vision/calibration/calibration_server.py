@@ -55,14 +55,18 @@ class UnifiedCalibrator:
         self.running = True
         self.frame_lock = threading.Lock()
         self.current_color_frame = None
-        self.current_depth_frame = None
         self.current_raw_depth_frame = None
+        self.frame_counter = 0
         self.status_text = "Ready."
         self.is_autocalibrating = False
         self.autocalibrate_state = 0 # 0: IDLE, 1: SCANNING_EMPTY, 2: WAITING_FILLED, 3: SCANNING_FILLED, 4: QUICK
         self.autocalibrate_progress = 0.0
         self.autocalibrate_results = []
         self.empty_scan_results = {}
+        self.ui_mode = "define_board"  # define_board, color_calibration, detection_calibration
+        
+        self.cached_grid_coords = None
+        self.cached_corners = []
 
         self.load_detection_calibration()
         self.load_realsense_calibration()
@@ -171,6 +175,7 @@ class UnifiedCalibrator:
                         self.current_color_frame = c_frame.copy()
                         self.current_depth_frame = d_frame.copy()
                         self.current_raw_depth_frame = raw_d.copy()
+                        self.frame_counter += 1
                 except Exception as e:
                     pass
                 time.sleep(0.001)
@@ -190,12 +195,19 @@ class UnifiedCalibrator:
                 pass
 
     def adjust_image(self, frame):
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * (self.saturation / 100.0), 0, 255)
-        frame = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-        alpha = self.contrast / 100.0
-        beta = self.brightness
-        frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+        if self.saturation != 100:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            h, s, v = cv2.split(hsv)
+            # Use cv2 for multiplication to avoid holding the Python GIL
+            s = cv2.multiply(s, self.saturation / 100.0)
+            hsv = cv2.merge([h, s, v])
+            frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            
+        if self.contrast != 100 or self.brightness != 0:
+            alpha = self.contrast / 100.0
+            beta = self.brightness
+            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+            
         return frame
 
     def draw_corners(self, frame):
@@ -206,28 +218,43 @@ class UnifiedCalibrator:
     def get_hole_coordinates(self):
         if len(self.corners) < 4:
             return []
+            
+        if self.cached_corners == self.corners and self.cached_grid_coords is not None:
+            return self.cached_grid_coords
+            
         corners = np.array(self.corners)
         dst_points = np.array([[0, 0], [6 * self.h_spacing, 0], [0, 5 * self.v_spacing], [6 * self.h_spacing, 5 * self.v_spacing]], dtype=np.float32)
         src_points = corners.astype(np.float32)
         M = cv2.getPerspectiveTransform(src_points, dst_points)
-        coords = []
+        
+        grid_points = []
         for row in range(6):
             for col in range(7):
-                grid_x = col * self.h_spacing
-                grid_y = row * self.v_spacing
-                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
-                transformed = cv2.perspectiveTransform(grid_point.reshape(1, 1, 2), np.linalg.inv(M))
-                coords.append((int(transformed[0, 0, 0]), int(transformed[0, 0, 1])))
+                grid_points.append([col * self.h_spacing, row * self.v_spacing])
+                
+        grid_points = np.array(grid_points, dtype=np.float32).reshape(-1, 1, 2)
+        transformed = cv2.perspectiveTransform(grid_points, np.linalg.inv(M))
+        
+        coords = []
+        for i in range(42):
+            coords.append((int(transformed[i, 0, 0]), int(transformed[i, 0, 1])))
+            
+        self.cached_grid_coords = coords
+        self.cached_corners = list(self.corners)
         return coords
 
     def draw_hole_grid(self, frame, is_depth_frame=False):
         if len(self.corners) == 4:
-            adjusted_frame = self.adjust_image(frame)
+            if not is_depth_frame and self.ui_mode in ["color_calibration", "detection_calibration"]:
+                adjusted_frame = self.adjust_image(frame)
+            else:
+                adjusted_frame = frame
+                
             coords = self.get_hole_coordinates()
             
             with self.frame_lock:
                 depth_frame = None
-                if self.show_occupancy_overlay and self.current_raw_depth_frame is not None:
+                if self.ui_mode in ["detection_calibration", "realsense"] and self.current_raw_depth_frame is not None:
                     depth_frame = self.current_raw_depth_frame.copy()
 
             idx = 0
@@ -236,7 +263,7 @@ class UnifiedCalibrator:
                     x, y = coords[idx]
                     
                     if 0 <= x < adjusted_frame.shape[1] and 0 <= y < adjusted_frame.shape[0]:
-                        if self.show_occupancy_overlay and depth_frame is not None:
+                        if self.ui_mode == "detection_calibration" and depth_frame is not None:
                             if 0 <= x < depth_frame.shape[1] and 0 <= y < depth_frame.shape[0]:
                                 radius = self.hole_diameter // 2
                                 y_min, y_max = max(0, y - radius), min(depth_frame.shape[0], y + radius)
@@ -245,7 +272,6 @@ class UnifiedCalibrator:
                                 valid_pixels = roi[(roi >= self.min_depth) & (roi <= self.max_depth)]
                                 
                                 if valid_pixels.size > 0 and roi.size > 0 and (valid_pixels.size / roi.size) >= self.occupancy_threshold:
-                                    import numpy as np
                                     d = np.median(valid_pixels)
                                 else:
                                     d = 0
@@ -254,7 +280,6 @@ class UnifiedCalibrator:
                                 self.hole_depth_history[idx] = self.hole_depth_history[idx][-self.temporal_smoothing:]
                                 
                                 if len(self.hole_depth_history[idx]) > 0:
-                                    import numpy as np
                                     median_d = np.median(self.hole_depth_history[idx])
                                     if median_d > 0:
                                         token_color = (0, 0, 255)
@@ -277,17 +302,34 @@ class UnifiedCalibrator:
                                             cv2.line(adjusted_frame, (x - 10, y + 10), (x + 10, y - 10), (0, 0, 255), 2)
                                     else:
                                         cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, (0, 255, 0), 2)
-                        else:
-                            color = (255, 0, 0)
-                            if col == 0 and self.calibration_complete and self.player1_color:
-                                color = tuple(self.player1_color)
-                            elif col == 1 and self.calibration_complete and self.player2_color:
-                                color = tuple(self.player2_color)
-                            elif col == 0:
-                                color = (0, 0, 255)
-                            elif col == 1:
-                                color = (0, 255, 255)
+                        elif self.ui_mode == "realsense" and depth_frame is not None:
+                            if 0 <= x < depth_frame.shape[1] and 0 <= y < depth_frame.shape[0]:
+                                radius = self.hole_diameter // 2
+                                y_min, y_max = max(0, y - radius), min(depth_frame.shape[0], y + radius)
+                                x_min, x_max = max(0, x - radius), min(depth_frame.shape[1], x + radius)
+                                roi = depth_frame[y_min:y_max, x_min:x_max]
+                                valid_pixels = roi[(roi >= self.min_depth) & (roi <= self.max_depth)]
+                                
+                                if valid_pixels.size > 0 and roi.size > 0 and (valid_pixels.size / roi.size) >= self.occupancy_threshold:
+                                    # Closed / Blocked
+                                    cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, (0, 0, 255), 3)
+                                    cv2.line(adjusted_frame, (x - 10, y - 10), (x + 10, y + 10), (0, 0, 255), 3)
+                                    cv2.line(adjusted_frame, (x - 10, y + 10), (x + 10, y - 10), (0, 0, 255), 3)
+                                else:
+                                    # Open
+                                    cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, (255, 255, 255), 2)
+                        elif self.ui_mode == "color_calibration":
+                            if col % 2 == 0: # Player 1
+                                color = tuple(self.player1_color) if self.calibration_complete and self.player1_color else (0, 0, 255)
+                            else: # Player 2
+                                color = tuple(self.player2_color) if self.calibration_complete and self.player2_color else (0, 255, 255)
                             cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, color, 2)
+                            # Draw inner solid circle for clarity
+                            cv2.circle(adjusted_frame, (x, y), max(2, self.hole_diameter // 2 - 4), color, -1)
+                        else:
+                            # Just draw the grid for define_board
+                            cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, (255, 255, 255), 2)
+                            cv2.circle(adjusted_frame, (x, y), 2, (255, 255, 255), -1)
                     idx += 1
             return adjusted_frame
         return frame
@@ -351,7 +393,7 @@ class UnifiedCalibrator:
         M = cv2.getPerspectiveTransform(src_points, dst_points)
         player1_samples = []
         player2_samples = []
-        for col in range(2):
+        for col in range(7):
             for row in range(6):
                 grid_x = col * self.h_spacing
                 grid_y = row * self.v_spacing
@@ -359,11 +401,11 @@ class UnifiedCalibrator:
                 transformed = cv2.perspectiveTransform(grid_point.reshape(1, 1, 2), np.linalg.inv(M))
                 x, y = transformed[0, 0].astype(int)
                 if 0 <= x < adjusted_frame.shape[1] and 0 <= y < adjusted_frame.shape[0]:
-                    radius = max(3, self.hole_diameter // 4)
+                    radius = max(3, self.hole_diameter // 2 - 2)
                     roi = adjusted_frame[max(0, y - radius):min(adjusted_frame.shape[0], y + radius), max(0, x - radius):min(adjusted_frame.shape[1], x + radius)]
                     if roi.size > 0:
                         avg_color = cv2.mean(roi)[:3]
-                        if col == 0:
+                        if col % 2 == 0:
                             player1_samples.append(avg_color)
                         else:
                             player2_samples.append(avg_color)
@@ -413,6 +455,10 @@ class UnifiedCalibrator:
         laser_min = params.get('laser_min', 150)
         laser_max = params.get('laser_max', 360)
         laser_step = params.get('laser_step', 50)
+        
+        duration = float(params.get('duration', 3.0))
+        num_frames = max(3, int(duration * 10)) # 10 FPS capture rate
+        sleep_between_frames = 1.0 / 10.0
             
         import numpy as np
         exposures = [int(x) for x in np.arange(exp_min, exp_max + 1, exp_step)]
@@ -470,8 +516,8 @@ class UnifiedCalibrator:
                     time.sleep(0.6)  # MUST be >0.5s to clear the camera's internal 16-frame buffer queue!
                     
                     frames_depths = []
-                    for _ in range(3):
-                        time.sleep(0.05)
+                    for _ in range(num_frames):
+                        time.sleep(sleep_between_frames)
                         with self.frame_lock:
                             if self.current_raw_depth_frame is not None:
                                 frames_depths.append(self.current_raw_depth_frame.copy())
@@ -479,7 +525,8 @@ class UnifiedCalibrator:
                     if not frames_depths:
                         continue
                         
-                    valid_holes = 0
+                    consistently_open = 0
+                    consistently_closed = 0
                     variances = []
                     
                     for (cx, cy) in coords:
@@ -493,27 +540,29 @@ class UnifiedCalibrator:
                                 hole_vals.append(np.mean(valid_pixels))
                                 
                         if len(hole_vals) == len(frames_depths):
-                            valid_holes += 1
+                            consistently_closed += 1
                             variances.append(np.var(hole_vals))
+                        elif len(hole_vals) == 0:
+                            consistently_open += 1
                             
                     avg_var = float(np.mean(variances)) if variances else 999999.0
                     
                     if mode == 'single':
-                        open_holes = 42 - valid_holes
+                        score = consistently_open
                         self.autocalibrate_results.append({
-                            'exposure': e, 'gain': g, 'laser': l, 'score': open_holes, 'var': avg_var
+                            'exposure': e, 'gain': g, 'laser': l, 'score': score, 'var': avg_var
                         })
-                        if open_holes > best_score or (open_holes == best_score and avg_var < best_var):
-                            best_score = open_holes
+                        if score > best_score or (score == best_score and avg_var < best_var):
+                            best_score = score
                             best_var = avg_var
                             best_params = (e, g, l)
                     else:
                         if step == 1:
-                            open_holes = 42 - valid_holes
-                            self.empty_scan_results[(e, g, l)] = (open_holes, avg_var)
+                            score = consistently_open
+                            self.empty_scan_results[(e, g, l)] = (score, avg_var)
                         elif step == 2:
                             empty_score, empty_var = self.empty_scan_results.get((e, g, l), (0, 999999.0))
-                            combined_score = min(empty_score, valid_holes)
+                            combined_score = min(empty_score, consistently_closed)
                             combined_var = (avg_var + empty_var) / 2
                             
                             self.autocalibrate_results.append({
@@ -537,7 +586,6 @@ class UnifiedCalibrator:
                             
         if mode == 'single' or step == 2:
             self.autocalibrate_results.sort(key=lambda x: (-x['score'], x['var']))
-            self.autocalibrate_results = self.autocalibrate_results[:10]
                             
         if mode == 'single':
             if best_params:
@@ -655,25 +703,38 @@ def get_status():
         "autocalibrate_state": calibrator.autocalibrate_state,
         "autocalibrate_progress": calibrator.autocalibrate_progress,
         "autocalibrate_results": calibrator.autocalibrate_results,
-        "show_occupancy_overlay": calibrator.show_occupancy_overlay
+        "ui_mode": calibrator.ui_mode
     })
 
 def generate_frames(stream_type):
+    last_frame = -1
     while True:
-        if stream_type == 'color':
-            img = calibrator.get_color_frame_image()
-        else:
-            img = calibrator.get_depth_frame_image()
-            
-        if img is None:
-            img = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(img, f"No {stream_type} feed", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            
-        _, buffer = cv2.imencode('.jpg', img)
-        frame = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(0.03)
+        try:
+            if calibrator.frame_counter == last_frame:
+                time.sleep(0.01)
+                continue
+                
+            last_frame = calibrator.frame_counter
+
+            if stream_type == 'color':
+                img = calibrator.get_color_frame_image()
+            else:
+                img = calibrator.get_depth_frame_image()
+                
+            if img is None:
+                img = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(img, f"No {stream_type} feed", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+            ret, buffer = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if not ret:
+                continue
+                
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        except Exception as e:
+            print(f"Generator error: {e}")
+            time.sleep(0.5)
 
 @app.route('/frame/color')
 def frame_color():
@@ -692,7 +753,7 @@ def click():
 
 @app.route('/api/autocalibrate/cancel', methods=['POST'])
 def cancel_autocalibrate():
-    if calibrator.is_autocalibrating:
+    if calibrator.autocalibrate_state in [1, 3, 4]:
         calibrator.autocalibrate_state = 'cancelled'
         calibrator.is_autocalibrating = False
     return jsonify({'status': 'Autocalibration cancelled'})
@@ -719,6 +780,14 @@ def update_detection():
             else:
                 setattr(calibrator, key, val)
     return jsonify({'status': 'Detection parameters updated'})
+
+@app.route('/api/set_ui_mode', methods=['POST'])
+def set_ui_mode():
+    data = request.json
+    mode = data.get('ui_mode')
+    if mode in ["define_board", "color_calibration", "detection_calibration", "realsense"]:
+        calibrator.ui_mode = mode
+    return jsonify({'status': 'UI mode updated'})
 
 @app.route('/api/update_realsense', methods=['POST'])
 def update_realsense():

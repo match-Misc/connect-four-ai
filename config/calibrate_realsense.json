@@ -1,6 +1,6 @@
 {
-    "exposure": 5000,
-    "gain": 64,
+    "exposure": 1000,
+    "gain": 16,
     "laser_power": 150,
     "visual_preset": 3,
     "min_depth_mm": 405,
