@@ -51,7 +51,8 @@ Before proceeding, ensure that the [Cabling](#cabling) is completed and all devi
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
 ## Calibrate the Camera for the Game
-1. Star tthe calibration by executing "pixi run calibrate" in the terminal
+Each time the game is setup somewhere the calibration of the RealSense and the colors of the match-coins must be checked. Due to different lighting conditions the HSV values need to be adjusted. 
+1. Start the calibration by executing "pixi run calibrate" in the terminal
 2. 
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
