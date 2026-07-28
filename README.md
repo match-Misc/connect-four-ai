@@ -4,7 +4,7 @@ This repository contains a robot-based version of the classic game **Connect Fou
 
 It builds upon the open-source project [connect-four-ai by benjaminrall](https://github.com/benjaminrall/connect-four-ai) and extends it with custom code for the **UR10e robot arm**. While originally designed as a showcase for events like the "Nacht des Maschinenbaus" (Night of Mechanical Engineering) or "Die Nacht die WissenSchaft" (The Night of Science), the setup is perfectly suited for various other exhibitions.
 
-> [INSERT IMAGE OF THE GAME ON THE MIR ROBOT]
+<img src="./docs/images/game-nobackground.png" alt="Connect Four game on the MuR620d" width="400" />
 
 This repository and the documentation below provide all the necessary components and instructions to set up the game quickly and smoothly.
 

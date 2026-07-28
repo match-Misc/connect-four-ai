@@ -7,7 +7,7 @@ The first step is to bring the MuR620 to its designated operating location. This
 **Important Notes Regarding the Location:**
 - Avoid placing the setup in front of very bright or overexposed backgrounds, as this may interfere with the camera's image recognition.
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Mounting of hardware components](#mounting-of-hardware-components)
 
 ## Mounting of hardware components
 To ensure the robot program works without modifications, all hardware components **must be mounted at the exact same screw holes**. 
@@ -23,9 +23,9 @@ The components to be mounted on the plate are color-coded as follows:
 - 🔴 **Red (RealSense Camera Mount)**: The slanted sides must face away from the game board.
 - 🔵 **Blue (UR Robot Arm)**: The Universal Robot (UR) arm that is used to play the game.
 
-INSERT REAL IMAGE OF THE GAME ON THE MIR ROBOT
+<img src="./images/game-overview-nobackground.png" alt="Overview of the game setup on MuR620d" width="400" />
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Cabling and Power Supply](#cabling-and-power-supply)
 
 ## Cabling and Power Supply
 
@@ -36,14 +36,14 @@ To ensure all hardware components are properly powered and connected, follow the
 3. **Connect Peripherals:** Plug the keyboard and mouse into the USB ports on the NUC.
 4. **Connect the Monitor:** Use the provided display cable from the grey equipment box to connect the monitor to the NUC.
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Getting the NUC ready](#getting-the-nuc-ready)
 
 ## Getting the NUC ready
 
 Before proceeding, ensure that the [Cabling](#cabling) is completed and all devices are powered on.
 
 1. Turn on the NUC by pressing its power button.
-2. When prompted, log in using the password: `match1234`.
+2. When prompted, log in using the password: `match123`.
 3. Open a new terminal window.
 4. Change into the project directory by running:
    ```bash
@@ -51,7 +51,7 @@ Before proceeding, ensure that the [Cabling](#cabling) is completed and all devi
    ```
    > If the `connect-four-ai` directory does not exist, please refer to the [Software Setup Guide](./software-setup.md) for instructions on how to prepare the environment and clone the repository.
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Calibrate the Camera for the Game](#calibrate-the-camera-for-the-game)
 
 ## Calibrate the Camera for the Game
 
@@ -89,12 +89,12 @@ Each time the game is set up in a new location, the camera alignment and coin co
 > **Important:**
 > Calibration is iterative. Sometimes you may need to go back to a previous step (e.g., tweaking the RealSense depth settings or board geometry) to get the best results in the final Detection phase.
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Getting the UR-robots ready](#getting-the-ur-robots-ready)
 
 ## Start the Game
 1. Start the game by executing "pixi run game" in the terminal
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Start UR program and move to initial pose](#start-ur-program-and-move-to-initial-pose)
 
 ## Getting the UR-robots ready
 Only one of the MuR620's robot arms is needed for the game; the other arm must be moved out of the way. In our setup, the UR10 on the left side of the MuR620 is designated as **UR10 1**, and the one on the right side is **UR10 2**.
@@ -108,7 +108,7 @@ Detailed instructions are provided in the following steps:
 2. [Mount Schunk Gripper to UR10 1](#mount-schunk-gripper-to-ur10-1)
 3. [Start UR program and move to initial pose](#start-ur-program-and-move-to-initial-pose)
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Move UR10 2 to the Side](#move-ur10-2-to-the-side)
 
 ### Move UR10 2 to the Side
 
@@ -123,20 +123,24 @@ The **UR10 2** [INSERT IMAGE LINK HERE] is not used in the Connect Four game and
 1. Access the UR User Interface by switching through the KVM switch and ensure you are controlling **UR10 2**.
 2. Use the **Move** tab to jog UR10 2 safely to the side so that its workspace does not overlap with UR10 1.
 3. See reference image for a pose that does not interfere with the game
-INSERT IMAGE HERE
+INSERT IMAGE HERE LATER
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Mount Schunk Gripper to UR10 1](#mount-schunk-gripper-to-ur10-1)
 
 ### Mount Schunk Gripper to UR10 1
 1. Look in the grey box for the two gripper jaws.
-INSERT IMAGE OF THE GRIPPER JAWS
+
+<img src="./images/gripping-jaws.jpg" alt="Schunk Gripper Mounting Holes" width="400" />
+
 2. Mount the two gripper jaws to the Schunk gripper.
 3. The gripper has an aluminium plate on the back with four diagonal holes. REMOVE IT from the gripper by loosening the four screws on the back. 
-INSERT IMAGE SHOWING THE HOLES
+
+<img src="./images/schunk-gripper-mointingholes.jpg" alt="Schunk Gripper Mounting Holes" width="400" />
+
 4. Mount the aluminium plate directly to the UR10 1 (see the image below).
 5. Mount the Schunk gripper to the aluminium plate. Using the diagonal holes going through the Schunk gripper 
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Start the Game](#start-the-game)
 
 ### Start UR program and move to initial pose
 **Important:** Before proceeding, verify that the correct program and installation are loaded. See: [Load UR Installation and UR program](./basic-skills.md#load-ur-installation-and-ur-program).
@@ -153,4 +157,4 @@ INSERT IMAGE SHOWING THE HOLES
 The robot is now actively waiting for TCP commands from the NUC to determine where to place the stones.
 **The UR setup is now finished.**
 
-[⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
+[⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide)
