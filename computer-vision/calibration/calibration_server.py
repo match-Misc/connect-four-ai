@@ -8,6 +8,10 @@ import pyrealsense2 as rs
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../robot-game/backend')))
+from nfc_reader import start_nfc_reader
+
 app = Flask(__name__, static_folder="frontend/dist", static_url_path="/static")
 CORS(app)
 
@@ -67,6 +71,14 @@ class UnifiedCalibrator:
         
         self.cached_grid_coords = None
         self.cached_corners = []
+
+        # NFC state
+        self.nfc_last_tag = None
+        
+        # Start NFC thread
+        def on_nfc_scan(tag_data):
+            self.nfc_last_tag = tag_data
+        self.nfc_thread = start_nfc_reader(on_nfc_scan)
 
         self.load_detection_calibration()
         self.load_realsense_calibration()
@@ -703,7 +715,9 @@ def get_status():
         "autocalibrate_state": calibrator.autocalibrate_state,
         "autocalibrate_progress": calibrator.autocalibrate_progress,
         "autocalibrate_results": calibrator.autocalibrate_results,
-        "ui_mode": calibrator.ui_mode
+        "ui_mode": calibrator.ui_mode,
+        "nfc_connected": os.path.exists('/dev/ttyUSB0'),
+        "nfc_last_tag": calibrator.nfc_last_tag
     })
 
 def generate_frames(stream_type):

@@ -5,7 +5,7 @@ import { Button } from './components/ui/button'
 import { Slider } from './components/ui/slider'
 import { Label } from './components/ui/label'
 import { Input } from './components/ui/input'
-import { Settings, Monitor, RefreshCw, Save, CheckCircle2, LayoutGrid, Palette, Target } from 'lucide-react'
+import { Settings, Monitor, RefreshCw, Save, CheckCircle2, LayoutGrid, Palette, Target, Nfc } from 'lucide-react'
 
 function SliderWithInput({ label, description, value, min = 0, max = 100, step = 1, onChange }: { label: string, description?: React.ReactNode, value: number, min?: number, max?: number, step?: number, onChange: (v: number) => void }) {
   return (
@@ -49,13 +49,15 @@ export default function App() {
   const activeTab = 
     location.pathname.includes('realsense') ? 'realsense' : 
     location.pathname.includes('color-calibration') ? 'color-calibration' :
-    location.pathname.includes('detection-calibration') ? 'detection-calibration' : 'define-board'
+    location.pathname.includes('detection-calibration') ? 'detection-calibration' :
+    location.pathname.includes('nfc-testing') ? 'nfc-testing' : 'define-board'
 
   useEffect(() => {
     let mode = 'define_board'
     if (activeTab === 'realsense') mode = 'realsense'
     if (activeTab === 'color-calibration') mode = 'color_calibration'
     if (activeTab === 'detection-calibration') mode = 'detection_calibration'
+    if (activeTab === 'nfc-testing') mode = 'nfc_testing'
     
     fetch('/api/set_ui_mode', {
       method: 'POST',
@@ -210,6 +212,14 @@ export default function App() {
             <Target className={`w-4 h-4 lg:w-5 lg:h-5 ${activeTab === 'detection-calibration' ? 'text-[#b1ca21]' : 'text-slate-400 group-hover:text-slate-600'}`} />
             Detection Calib.
           </button>
+
+          <button 
+            onClick={() => navigate('/nfc-testing')}
+            className={`flex-shrink-0 lg:w-full flex items-center gap-2 lg:gap-3 px-3 py-2 lg:px-4 lg:py-3.5 rounded-xl text-xs lg:text-sm font-medium transition-all duration-200 group ${activeTab === 'nfc-testing' ? 'bg-[#b1ca21]/10 text-[#8a9e19] border border-[#b1ca21]/20 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-transparent'}`}
+          >
+            <Nfc className={`w-4 h-4 lg:w-5 lg:h-5 ${activeTab === 'nfc-testing' ? 'text-[#b1ca21]' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            NFC Testing
+          </button>
         </nav>
         
         <Routes>
@@ -260,6 +270,59 @@ export default function App() {
       <main className="flex-1 flex flex-col overflow-y-auto bg-slate-50/50 relative">
         <div className="p-4 lg:p-10 max-w-5xl mx-auto w-full relative z-10 pb-20">
           
+          <div className={activeTab === 'nfc-testing' ? 'block' : 'hidden'}>
+            <div className="space-y-6 lg:space-y-8">
+              <header className="mb-4 lg:mb-6">
+                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">NFC Testing</h2>
+                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Verify the connection to the USB NFC reader and test scanning tags.</p>
+              </header>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card className="bg-white border-slate-200 shadow-sm">
+                  <CardHeader className="pb-4 border-b border-slate-100 mb-4">
+                    <CardTitle className="text-lg text-slate-800">Connection Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4 items-center justify-center py-8">
+                    {status.nfc_connected ? (
+                      <div className="flex flex-col items-center gap-3 text-emerald-600">
+                        <CheckCircle2 className="w-16 h-16" />
+                        <span className="text-xl font-bold">Connected</span>
+                        <span className="text-sm text-slate-500">USB Device detected at /dev/ttyUSB0</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3 text-red-500">
+                        <RefreshCw className="w-16 h-16 animate-spin" />
+                        <span className="text-xl font-bold">Disconnected</span>
+                        <span className="text-sm text-slate-500">Please plug in the USB NFC reader</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white border-slate-200 shadow-sm">
+                  <CardHeader className="pb-4 border-b border-slate-100 mb-4">
+                    <CardTitle className="text-lg text-slate-800">Last Scanned Tag</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4 items-center justify-center py-8">
+                    {status.nfc_last_tag ? (
+                      <div className="flex flex-col items-center gap-3">
+                        <Nfc className="w-16 h-16 text-emerald-600" />
+                        <span className="text-2xl font-mono font-bold text-slate-800">{status.nfc_last_tag}</span>
+                        <span className="text-sm text-slate-500">Successfully scanned</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3 text-slate-400">
+                        <Nfc className="w-16 h-16 opacity-50" />
+                        <span className="text-xl font-medium">No Tag Scanned</span>
+                        <span className="text-sm text-slate-400">Hold a tag against the reader</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+
           <div className={activeTab === 'define-board' ? 'block' : 'hidden'}>
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">

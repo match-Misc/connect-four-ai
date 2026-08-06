@@ -20,6 +20,7 @@ flask-cors = ">=6.0.5,<7"
 nodejs = ">=26.5.0,<26.6"
 opencv = ">=5.0.0,<6"
 pydantic = ">=2.13.4,<3"
+pyserial = ">=3.5,<4"
 
 [pypi-dependencies]
 pyrealsense2 = ">=2.58.2.10647, <3"

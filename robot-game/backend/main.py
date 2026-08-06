@@ -7,6 +7,7 @@ import time
 
 from vision_service import VisionService
 from robot_controller import RobotController
+from nfc_reader import start_nfc_reader
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +19,7 @@ DEFAULT_SETTINGS = {
     "debounce_time": 0.5,
     "ai_enabled": True,
     "difficulty": "medium",
+    "nfc_timeout": 15.0,
 }
 
 def load_settings():
@@ -46,6 +48,10 @@ def load_settings():
         settings["debounce_time"] = float(settings["debounce_time"])
     except (TypeError, ValueError):
         settings["debounce_time"] = DEFAULT_SETTINGS["debounce_time"]
+    try:
+        settings["nfc_timeout"] = float(settings["nfc_timeout"])
+    except (TypeError, ValueError):
+        settings["nfc_timeout"] = DEFAULT_SETTINGS["nfc_timeout"]
     return settings
 
 def save_settings():
@@ -54,6 +60,7 @@ def save_settings():
         "debounce_time": state.debounce_time,
         "ai_enabled": state.ai_enabled,
         "difficulty": robot_controller.difficulty_name,
+        "nfc_timeout": state.nfc_timeout,
     }
     tmp_path = f"{SETTINGS_FILE}.tmp"
     try:
@@ -108,6 +115,12 @@ class GameState:
         # reset for the same reason as robot_stone_requested.
         self.robot_stone_held = False
 
+        # NFC Reader State
+        self.nfc_timeout = settings["nfc_timeout"]
+        self.nfc_data = None
+        self.nfc_scan_time = 0
+        self.nfc_invalid_scan_time = 0
+
 state = GameState(settings)
 
 def difficulty_toggle_allowed():
@@ -142,6 +155,17 @@ def start_robot_move():
         state.robot_state = "analyzing"
     threading.Thread(target=execute_robot_move, daemon=True).start()
     return True
+
+def on_nfc_scan(tag_data):
+    # Only allow saving tag if the board is empty (no stones inserted)
+    if count_tokens(state.internal_board) == 0 and state.robot_state == "idle":
+        state.nfc_data = tag_data
+        state.nfc_scan_time = time.time()
+    else:
+        # Tried scanning mid-game
+        state.nfc_invalid_scan_time = time.time()
+
+nfc_thread = start_nfc_reader(on_nfc_scan)
 
 # We need to start/stop the vision service around the Flask app lifecycle.
 # In a simple setup, we can start it on the first request, or right here.
@@ -351,6 +375,11 @@ def detection_loop():
         try:
             process_board_update()
             maintain_robot_stone()
+            
+            # Clear expired NFC data
+            if state.nfc_data and time.time() - state.nfc_scan_time > state.nfc_timeout:
+                state.nfc_data = None
+                
         except Exception as e:
             print(f"[detection] error: {e}")
         time.sleep(0.02)
@@ -374,7 +403,11 @@ def get_board_state():
         "ai_enabled": state.ai_enabled,
         "difficulty": robot_controller.difficulty_name,
         "robot_target_col": state.robot_target_col,
-        "tcp_connected": robot_controller.is_robot_connected
+        "tcp_connected": robot_controller.is_robot_connected,
+        "nfc_connected": os.path.exists('/dev/ttyUSB0'),
+        "nfc_data": state.nfc_data,
+        "nfc_invalid_scan_time": state.nfc_invalid_scan_time,
+        "nfc_timeout": state.nfc_timeout
     })
 
 @app.route("/api/player-move", methods=["POST"])
@@ -494,6 +527,12 @@ def update_config():
     if "debounce_time" in data:
         try:
             state.debounce_time = float(data["debounce_time"])
+        except ValueError:
+            pass
+
+    if "nfc_timeout" in data:
+        try:
+            state.nfc_timeout = float(data["nfc_timeout"])
         except ValueError:
             pass
 
