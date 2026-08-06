@@ -4,6 +4,124 @@
 
 @theme {
   --color-brand-green: #9CB01A;
+
+  /* Pops in once, then keeps swelling gently for as long as the celebration runs. */
+  --animate-win-text: win-pop 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    win-pulse 1.2s ease-in-out 700ms infinite;
+  @keyframes win-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.4) translateY(24px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  /* Size only, so the text stays fully opaque throughout. Starts at the pose
+     win-pop ends on, so the handoff between the two is seamless. */
+  @keyframes win-pulse {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.06);
+    }
+  }
+
+  /* --- Robot win: the consolation screen. Every motion here is soft and
+     bouncy on purpose — the players are children, so losing has to read as
+     "try again", not as an alarm. --- */
+
+  --animate-lose-scrim: lose-fade 500ms ease-out both;
+  --animate-lose-out: lose-fade 600ms ease-in reverse both;
+  @keyframes lose-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Overshoots slightly, so the robot arrives with a hop. */
+  --animate-lose-in: lose-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  /* Same entrance, delayed: the robot lands first, then it speaks. */
+  --animate-lose-text: lose-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) 260ms both;
+  @keyframes lose-in {
+    0% {
+      opacity: 0;
+      transform: scale(0.6) translateY(30px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  --animate-robot-bob: robot-bob 2.4s ease-in-out infinite;
+  @keyframes robot-bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-14px);
+    }
+  }
+
+  --animate-robot-wave: robot-wave 900ms ease-in-out infinite;
+  @keyframes robot-wave {
+    0%,
+    100% {
+      transform: rotate(-8deg);
+    }
+    50% {
+      transform: rotate(26deg);
+    }
+  }
+
+  /* Idles wide-eyed and blinks once near the end of each cycle. */
+  --animate-robot-blink: robot-blink 3.4s ease-in-out infinite;
+  @keyframes robot-blink {
+    0%,
+    92%,
+    100% {
+      transform: scaleY(1);
+    }
+    96% {
+      transform: scaleY(0.1);
+    }
+  }
+
+  --animate-robot-glow: robot-glow 1.6s ease-in-out infinite;
+  @keyframes robot-glow {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  /* Duration and delay are set per token from the component. */
+  --animate-token-float: token-float linear infinite;
+  @keyframes token-float {
+    0% {
+      opacity: 0;
+      transform: translate3d(0, 0, 0) scale(0.6);
+    }
+    12%,
+    88% {
+      opacity: 0.85;
+    }
+    100% {
+      opacity: 0;
+      transform: translate3d(var(--drift, 0px), -112vh, 0) scale(1);
+    }
+  }
 }
 
 @layer base {

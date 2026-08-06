@@ -97,12 +97,14 @@ class GameState:
         # Guards the idle -> analyzing transition so only one move thread runs.
         self.robot_move_lock = threading.Lock()
         # True once the robot has been told to pick up a token and has not yet
-        # dropped it. Survives a reset: the token is in the gripper either way.
+        # dropped it. Cleared on a reset: the pendant's reset returns the arm to
+        # its start position with an empty gripper, so a token we believe it
+        # grabbed before the reset is gone.
         self.robot_stone_requested = False
         # True once the robot ACKED the grab (sent GRABBED). The column of a
         # move is held back until then, so the grab code and the column can
         # never sit unread in the pendant's buffer together -- without
-        # terminators it would read them as one garbled message. Survives a
+        # terminators it would read them as one garbled message. Cleared on a
         # reset for the same reason as robot_stone_requested.
         self.robot_stone_held = False
 
@@ -507,6 +509,19 @@ def reset_game_state():
     state.game_over = False
     state.winner = None
     state.match_state = "in_game"
+    state.error_msg = None
+    state.invalid_stones = []
+
+    # Drop the column of the move the reset just cancelled before forgetting the
+    # grab, so it cannot be flushed to the robot on the next GRABBED ack and
+    # send it to a column from the game we just abandoned.
+    robot_controller.clear_pending_column()
+    # A reset puts the pendant back at its start position with an empty gripper,
+    # so whatever we believed about the token in it no longer holds. Without
+    # this, maintain_robot_stone() still thinks the robot is holding one and
+    # never sends the grab code again, leaving it empty-handed for good.
+    state.robot_stone_requested = False
+    state.robot_stone_held = False
 
 @app.route("/api/reset", methods=["POST"])
 def reset_game():

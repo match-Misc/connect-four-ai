@@ -288,6 +288,13 @@ class RobotController:
                 with self.robot_conn_lock:
                     self.pending_column = pending
 
+    def clear_pending_column(self):
+        """Forget a queued column, e.g. because its game was reset."""
+        with self.robot_conn_lock:
+            if self.pending_column is not None:
+                print(f"Dropped queued column {self.pending_column}")
+                self.pending_column = None
+
     def request_reset(self):
         if self.on_reset_requested is None:
             print("Ignoring reset from robot button: no handler installed")

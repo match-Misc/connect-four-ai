@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { cn } from './utils';
 import { ConnectFourGrid } from './components/ConnectFourGrid';
+import { Fireworks } from './components/Fireworks';
+import { RobotWins } from './components/RobotWins';
 import { ThemeToggle } from './components/ThemeToggle';
-import { Activity, Bot, User, Settings2, Bug, Gamepad2 } from 'lucide-react';
+import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
 
@@ -47,9 +49,14 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [aiEnabled, setAiEnabled] = useState<boolean>(true);
   const [robotTargetCol, setRobotTargetCol] = useState<number | null>(null);
   const [tcpConnected, setTcpConnected] = useState<boolean>(false);
+  const [celebrating, setCelebrating] = useState<boolean>(false);
+  const [consoling, setConsoling] = useState<boolean>(false);
   // Until the first board-state response lands, our config values are placeholders
   // rather than the persisted ones — posting them would overwrite the saved session.
   const hydrated = useRef(false);
+  // The board state is polled, so the result arrives over and over — only the
+  // first one of a game should set off an end-of-game animation.
+  const gameOverAnimated = useRef(false);
 
   const fetchBoardState = async () => {
     try {
@@ -85,16 +92,34 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   useEffect(() => {
     fetchBoardState();
     // The backend advances detection on its own thread now, so this only sets
-    // how fast the GUI catches up to it.
-    const interval = setInterval(fetchBoardState, 150);
+    // how fast the GUI catches up to it. Each poll re-renders the whole board,
+    // so we back off while the celebration runs — the game is over anyway, and
+    // the animation gets the main thread to itself.
+    const interval = setInterval(fetchBoardState, celebrating || consoling ? 600 : 150);
     return () => clearInterval(interval);
-  }, []);
+  }, [celebrating, consoling]);
 
   useEffect(() => {
     if (aiEnabled && turn === 'robot' && robotState === 'idle') {
       triggerRobotMove();
     }
   }, [aiEnabled, turn, robotState]);
+
+  useEffect(() => {
+    if (!gameOver) {
+      // Re-arm for the next game.
+      gameOverAnimated.current = false;
+      return;
+    }
+    if (gameOverAnimated.current) return;
+    if (winner === 1) {
+      gameOverAnimated.current = true;
+      setCelebrating(true);
+    } else if (winner === 2) {
+      gameOverAnimated.current = true;
+      setConsoling(true);
+    }
+  }, [gameOver, winner]);
 
   const triggerRobotMove = async () => {
     try {
@@ -139,6 +164,15 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
 
   return (
     <div className={cn("bg-gray-50 dark:bg-gray-950 flex flex-col items-center py-4 font-sans w-full", showDebug ? "min-h-screen" : "h-screen overflow-hidden")}>
+      <Fireworks active={celebrating} onDone={() => setCelebrating(false)} />
+      <RobotWins active={consoling} onDone={() => setConsoling(false)} />
+      {celebrating && (
+        <div className="fixed inset-0 z-[101] flex items-center justify-center pointer-events-none">
+          <h2 className="animate-win-text text-center font-black uppercase tracking-tight text-brand-green text-5xl sm:text-7xl lg:text-8xl drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
+            Du hast gewonnen!
+          </h2>
+        </div>
+      )}
       <div className="w-full px-4 xl:px-8 flex flex-col gap-4 h-full">
 
         {/* Header */}
@@ -195,6 +229,29 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                 className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-950 dark:hover:bg-red-900 dark:text-red-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm"
               >
                 Reset
+              </button>
+
+              {/* TEMPORARY: previews the end-of-game animations without playing a game. Remove once they are signed off. */}
+              <button
+                onClick={() => {
+                  setCelebrating(false);
+                  // Remount on the next frame so a second click restarts the show.
+                  requestAnimationFrame(() => setCelebrating(true));
+                }}
+                title="Temporary: preview the win animation"
+                className="bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-950 dark:hover:bg-amber-900 dark:text-amber-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm flex items-center gap-2"
+              >
+                <Sparkles className="w-5 h-5 lg:w-6 lg:h-6" /> Win
+              </button>
+              <button
+                onClick={() => {
+                  setConsoling(false);
+                  requestAnimationFrame(() => setConsoling(true));
+                }}
+                title="Temporary: preview the loss animation"
+                className="bg-sky-100 hover:bg-sky-200 text-sky-700 dark:bg-sky-950 dark:hover:bg-sky-900 dark:text-sky-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm flex items-center gap-2"
+              >
+                <Bot className="w-5 h-5 lg:w-6 lg:h-6" /> Lose
               </button>
             </div>
           </div>
