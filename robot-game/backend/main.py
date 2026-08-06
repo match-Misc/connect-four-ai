@@ -4,6 +4,7 @@ import os
 from flask_cors import CORS
 import threading
 import time
+import traceback
 
 from vision_service import VisionService
 from robot_controller import RobotController
@@ -13,6 +14,16 @@ app = Flask(__name__)
 CORS(app)
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+# How long to wait for the robot's GRABBED ack before assuming the grab code
+# never reached it and sending it again. Generous on purpose: it has to cover
+# the arm's whole trip to the pickup station, and a retry that overtakes a slow
+# ack makes the robot fetch a second token.
+GRAB_ACK_TIMEOUT = 20.0
+
+# How often to mention that no robot is on the wire. The detection loop notices
+# 50x a second, which is far too often to print.
+ROBOT_ABSENT_LOG_INTERVAL = 15.0
 
 DEFAULT_SETTINGS = {
     "simulation_mode": False,
@@ -114,6 +125,10 @@ class GameState:
         # terminators it would read them as one garbled message. Cleared on a
         # reset for the same reason as robot_stone_requested.
         self.robot_stone_held = False
+        # When the outstanding grab code went out, so a missing ack can be
+        # retried instead of stalling the game for good.
+        self.robot_stone_requested_time = 0.0
+        self.robot_absent_logged = 0.0
 
         # NFC Reader State
         self.nfc_timeout = settings["nfc_timeout"]
@@ -293,6 +308,15 @@ def process_board_update():
                 state.winner = None
                 state.turn = "human"
                 state.match_state = "in_game"
+                # Same reason reset_game_state() drops it: a column left over
+                # from the game just abandoned would otherwise be flushed to the
+                # robot on the next GRABBED ack, sending it to a column of a
+                # board that no longer exists.
+                robot_controller.clear_pending_column()
+                # robot_stone_requested/_held are deliberately NOT cleared here.
+                # Clearing the board does not touch the arm, so a token it
+                # grabbed for the game just abandoned is still in its gripper;
+                # claiming otherwise would send it off to fetch a second one.
             else:
                 # Strict superset check
                 missing_stones = False
@@ -365,9 +389,36 @@ def maintain_robot_stone():
     """
     if state.game_over or state.match_state != "in_game":
         return
-    if state.robot_stone_requested:
+    if state.robot_stone_held:
         return
-    state.robot_stone_requested = robot_controller.send_game_continues()
+    if state.robot_stone_requested:
+        # The grab code went out but no GRABBED came back yet. A send the kernel
+        # accepted is no proof the robot read it: it may be powered off behind a
+        # half-open socket, restarting, or have skipped the grab because its
+        # gripper was still full. Gating on robot_stone_requested alone deadlocks
+        # the game for good in that case -- execute_robot_move() waits on an ack
+        # that never arrives, so the column is never sent and the robot just
+        # stands there.
+        if time.time() - state.robot_stone_requested_time < GRAB_ACK_TIMEOUT:
+            return
+        print(f"[robot] No GRABBED ack after {GRAB_ACK_TIMEOUT:.0f}s; re-sending the grab code")
+
+    if robot_controller.send_game_continues():
+        state.robot_stone_requested = True
+        state.robot_stone_requested_time = time.time()
+    else:
+        # Not delivered (robot not connected, socket busy) -- the next pass
+        # through the detection loop tries again. Say so on a slow beat: the
+        # robot is the side that dials us, so a pendant program started before
+        # this server was listening never connects and never retries. Staying
+        # silent about it is what makes a start-order problem look like a game
+        # that refuses to move.
+        state.robot_stone_requested = False
+        now = time.time()
+        if now - state.robot_absent_logged >= ROBOT_ABSENT_LOG_INTERVAL:
+            state.robot_absent_logged = now
+            print(f"[robot] Nothing connected on port {robot_controller.robot_server_port}; "
+                  "waiting for the pendant program to dial in")
 
 
 def detection_loop():
@@ -407,7 +458,13 @@ def get_board_state():
         "nfc_connected": os.path.exists('/dev/ttyUSB0'),
         "nfc_data": state.nfc_data,
         "nfc_invalid_scan_time": state.nfc_invalid_scan_time,
-        "nfc_timeout": state.nfc_timeout
+        "nfc_timeout": state.nfc_timeout,
+        # Handshake state. A move sits in run_robot_move() until stone_held goes
+        # true, so "grab_requested true, stone_held false" is the signature of a
+        # column being withheld because the robot never sent GRABBED.
+        "grab_requested": state.robot_stone_requested,
+        "stone_held": state.robot_stone_held,
+        "robot_connects": robot_controller.connection_count
     })
 
 @app.route("/api/player-move", methods=["POST"])
@@ -445,6 +502,17 @@ def player_move():
     return jsonify({"status": "success", "board": state.internal_board})
 
 def execute_robot_move():
+    try:
+        run_robot_move()
+    except Exception:
+        traceback.print_exc()
+        # A thread that dies mid-move would leave robot_state at "thinking" or
+        # "moving", and start_robot_move() only ever leaves "idle" -- the robot
+        # would never move again for the rest of the game.
+        state.robot_state = "idle"
+        state.robot_target_col = None
+
+def run_robot_move():
     print(f"\n[AI] execute_robot_move triggered. AI Enabled: {state.ai_enabled}")
 
     # Wait until the physical board is valid before computing a move
@@ -475,7 +543,7 @@ def execute_robot_move():
         # Handshake: hold the column back until the robot confirmed the grab,
         # even if the human answered before it reached the pickup station.
         start = time.time()
-        warned = False
+        last_warn = 0.0
         while not state.robot_stone_held:
             if state.game_over or state.match_state != "in_game" or state.robot_state != "moving":
                 # Reset or board cleared while waiting; this move is stale.
@@ -483,9 +551,14 @@ def execute_robot_move():
                     state.robot_state = "idle"
                 state.robot_target_col = None
                 return
-            if not warned and time.time() - start > 15:
-                print("[AI] Still waiting for the robot's GRABBED ack -- is the pendant program sending it?")
-                warned = True
+            # Keep saying it: maintain_robot_stone() re-sends the grab code, so a
+            # wait that outlives a couple of those means the pendant never acks
+            # at all, which is the one thing the retry cannot fix.
+            waited = time.time() - start
+            if waited > 15 and waited - last_warn >= 15:
+                last_warn = waited
+                print(f"[AI] Still waiting for the robot's GRABBED ack after {waited:.0f}s "
+                      "-- is the pendant program sending it?")
             time.sleep(0.05)
         robot_controller.send_robot_column(best_move)
 

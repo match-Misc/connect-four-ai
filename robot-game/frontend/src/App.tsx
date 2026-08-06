@@ -215,7 +215,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                 <Link to="/game" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", !showDebug ? "text-brand-green" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
                   <Gamepad2 size={18} /> Play
                 </Link>
-                <Link to="/debugging" className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", showDebug ? "text-purple-600 dark:text-purple-400" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
+                <Link to={showDebug ? "/game" : "/debugging"} title={showDebug ? "Close debug view" : "Open debug view"} className={cn("text-sm lg:text-base font-semibold flex items-center gap-1.5 transition-colors", showDebug ? "text-purple-600 dark:text-purple-400" : "text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300")}>
                   <Bug size={18} /> Debug
                 </Link>
                 <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />

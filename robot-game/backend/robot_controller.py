@@ -50,6 +50,10 @@ class RobotController:
         self.robot_server_running = False
         self.robot_conn_lock = threading.Lock()
         self.pending_column = None
+        # How many times the robot has connected. A pendant that opens and
+        # closes its socket per exchange shows up here as a climbing count, and
+        # would silently wipe the grab handshake on every reconnect.
+        self.connection_count = 0
 
         # Difficulty button on the robot. The guard decides whether a TOGGLE is
         # accepted right now; while it is unset every toggle is rejected, so that
@@ -179,16 +183,21 @@ class RobotController:
                         except:
                             pass
                         self.robot_client_socket = conn
-                    
-                    print(f"Robot connected from {addr}")
-                    threading.Thread(
-                        target=self.robot_reader_loop, args=(conn,), daemon=True
-                    ).start()
+                        self.connection_count += 1
+
+                    print(f"Robot connected from {addr} (connection #{self.connection_count})")
+                    # Before the reader starts, not after: the handler wipes what
+                    # we believe about the gripper, so a GRABBED that arrived in
+                    # between would be thrown away and the move it belongs to
+                    # would wait on an ack that already came and went.
                     if self.on_robot_connected:
                         try:
                             self.on_robot_connected()
                         except Exception as e:
                             print(f"on_robot_connected callback failed: {e}")
+                    threading.Thread(
+                        target=self.robot_reader_loop, args=(conn,), daemon=True
+                    ).start()
                     # A queued column is NOT flushed here: the pendant just
                     # restarted with an empty gripper, so it first has to be
                     # told to grab again. Delivery happens when its GRABBED
