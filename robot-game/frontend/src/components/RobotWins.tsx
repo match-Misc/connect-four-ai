@@ -72,12 +72,12 @@ export function RobotWins({ active, duration = 7000, onDone }: RobotWinsProps) {
     <div
       className={cn(
         'fixed inset-0 z-[100] flex flex-col items-center justify-center gap-8 px-6 pointer-events-none',
-        leaving && 'animate-lose-out',
+        leaving && 'animate-overlay-out',
       )}
     >
       {/* Dims the board so the robot carries the moment. The game is over, and
           the overlay passes clicks through, so Reset stays reachable. */}
-      <div className="absolute inset-0 bg-gray-950/55 animate-lose-scrim" />
+      <div className="absolute inset-0 bg-gray-950/55 animate-overlay-scrim" />
 
       {/* Tokens drift upwards: rising reads as hopeful, falling reads as defeat. */}
       <div className="absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -99,13 +99,13 @@ export function RobotWins({ active, duration = 7000, onDone }: RobotWinsProps) {
         ))}
       </div>
 
-      <div className="relative flex flex-col items-center gap-8 animate-lose-in">
+      <div className="relative flex flex-col items-center gap-8 animate-overlay-in">
         <div className="animate-robot-bob">
           <RobotMascot />
         </div>
 
         {/* Speech bubble — the robot is talking to the child, not gloating at them. */}
-        <div className="animate-lose-text relative max-w-3xl rounded-[2rem] border-4 border-brand-green bg-white dark:bg-gray-900 px-8 py-6 lg:px-14 lg:py-10 shadow-2xl text-center">
+        <div className="animate-overlay-text relative max-w-3xl rounded-[2rem] border-4 border-brand-green bg-white dark:bg-gray-900 px-8 py-6 lg:px-14 lg:py-10 shadow-2xl text-center">
           <div className="absolute -top-4 left-1/2 -translate-x-1/2 w-7 h-7 rotate-45 border-l-4 border-t-4 border-brand-green bg-white dark:bg-gray-900" />
           <p className="font-black tracking-tight text-gray-800 dark:text-gray-100 text-3xl sm:text-4xl lg:text-5xl">
             Du hast leider verloren.
@@ -152,7 +152,7 @@ function RobotMascot() {
       {/* Eyes. Squashed vertically for the blink, so the origin has to sit on
           the group's own box rather than the viewBox. */}
       <g
-        className="animate-robot-blink"
+        className="animate-eye-blink"
         style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
       >
         <circle cx="88" cy="70" r="7" className="fill-[#4ECDC4]" />

@@ -30,13 +30,13 @@
     }
   }
 
-  /* --- Robot win: the consolation screen. Every motion here is soft and
-     bouncy on purpose — the players are children, so losing has to read as
-     "try again", not as an alarm. --- */
+  /* --- Shared by the full-screen end-of-game overlays (robot win, draw).
+     Every motion there is soft and bouncy on purpose — the players are
+     children, so not winning has to read as "try again", not as an alarm. --- */
 
-  --animate-lose-scrim: lose-fade 500ms ease-out both;
-  --animate-lose-out: lose-fade 600ms ease-in reverse both;
-  @keyframes lose-fade {
+  --animate-overlay-scrim: overlay-fade 500ms ease-out both;
+  --animate-overlay-out: overlay-fade 600ms ease-in reverse both;
+  @keyframes overlay-fade {
     from {
       opacity: 0;
     }
@@ -45,11 +45,11 @@
     }
   }
 
-  /* Overshoots slightly, so the robot arrives with a hop. */
-  --animate-lose-in: lose-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  /* Same entrance, delayed: the robot lands first, then it speaks. */
-  --animate-lose-text: lose-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) 260ms both;
-  @keyframes lose-in {
+  /* Overshoots slightly, so the scene arrives with a hop. */
+  --animate-overlay-in: overlay-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  /* Same entrance, delayed: the scene lands first, then the text speaks. */
+  --animate-overlay-text: overlay-in 650ms cubic-bezier(0.34, 1.56, 0.64, 1) 260ms both;
+  @keyframes overlay-in {
     0% {
       opacity: 0;
       transform: scale(0.6) translateY(30px);
@@ -82,9 +82,10 @@
     }
   }
 
-  /* Idles wide-eyed and blinks once near the end of each cycle. */
-  --animate-robot-blink: robot-blink 3.4s ease-in-out infinite;
-  @keyframes robot-blink {
+  /* Idles wide-eyed and blinks once near the end of each cycle. Shared by the
+     robot's face and the draw screen's tokens. */
+  --animate-eye-blink: eye-blink 3.4s ease-in-out infinite;
+  @keyframes eye-blink {
     0%,
     92%,
     100% {
@@ -103,6 +104,60 @@
     }
     50% {
       opacity: 0.35;
+    }
+  }
+
+  /* --- Draw: the two tokens bump each other. The bump lands at 42% of the
+     cycle, and every animation below shares the same duration so the squash
+     and the sparkle stay on that beat. --- */
+
+  /* The offsets are in the draw SVG's own units: at 42% the two tokens are
+     exactly touching, so they never overlap into one blob. */
+  --animate-draw-bump-left: draw-bump-left 1.8s ease-in-out infinite;
+  @keyframes draw-bump-left {
+    0%,
+    100% {
+      transform: translateX(-14px) rotate(-6deg);
+    }
+    42% {
+      transform: translateX(4px) rotate(4deg);
+    }
+    58% {
+      transform: translateX(0) rotate(1deg);
+    }
+  }
+
+  --animate-draw-bump-right: draw-bump-right 1.8s ease-in-out infinite;
+  @keyframes draw-bump-right {
+    0%,
+    100% {
+      transform: translateX(14px) rotate(6deg);
+    }
+    42% {
+      transform: translateX(-4px) rotate(-4deg);
+    }
+    58% {
+      transform: translateX(0) rotate(-1deg);
+    }
+  }
+
+  /* Flashes on contact and is invisible the rest of the time. */
+  --animate-draw-spark: draw-spark 1.8s ease-in-out infinite;
+  @keyframes draw-spark {
+    0%,
+    30%,
+    72%,
+    100% {
+      opacity: 0;
+      transform: scale(0.3) rotate(0deg);
+    }
+    44% {
+      opacity: 1;
+      transform: scale(1.15) rotate(25deg);
+    }
+    60% {
+      opacity: 0.55;
+      transform: scale(0.85) rotate(40deg);
     }
   }
 

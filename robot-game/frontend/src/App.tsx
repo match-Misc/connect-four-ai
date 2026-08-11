@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { cn } from './utils';
 import { ConnectFourGrid } from './components/ConnectFourGrid';
+import { Draw } from './components/Draw';
 import { Fireworks } from './components/Fireworks';
 import { RobotWins } from './components/RobotWins';
 import { ThemeToggle } from './components/ThemeToggle';
-import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles, Nfc } from 'lucide-react';
+import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles, Nfc, Handshake } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
 
@@ -83,6 +84,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [robotConnects, setRobotConnects] = useState<number>(0);
   const [celebrating, setCelebrating] = useState<boolean>(false);
   const [consoling, setConsoling] = useState<boolean>(false);
+  const [tied, setTied] = useState<boolean>(false);
 
   const [nfcData, setNfcData] = useState<string | null>(null);
   const [nfcInvalidScanTime, setNfcInvalidScanTime] = useState<number>(0);
@@ -119,7 +121,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       setRobotState(data.robot_state);
       setSimulationMode(data.simulation_mode);
       setGameOver(data.game_over || false);
-      setWinner(data.winner || null);
+      // `??`, not `||`: a draw is winner 0, which `||` would flatten into the
+      // same null the backend sends while a game is still running.
+      setWinner(data.winner ?? null);
       setErrorMsg(data.error_msg || null);
       const stones = data.invalid_stones || NO_STONES;
       setInvalidStones(prev => (sameGrid(prev, stones) ? prev : stones));
@@ -185,9 +189,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
     // how fast the GUI catches up to it. Each poll re-renders the whole board,
     // so we back off while the celebration runs — the game is over anyway, and
     // the animation gets the main thread to itself.
-    const interval = setInterval(fetchBoardState, celebrating || consoling ? 600 : 150);
+    const interval = setInterval(fetchBoardState, celebrating || consoling || tied ? 600 : 150);
     return () => clearInterval(interval);
-  }, [celebrating, consoling]);
+  }, [celebrating, consoling, tied]);
 
   useEffect(() => {
     if (aiEnabled && turn === 'robot' && robotState === 'idle') {
@@ -208,6 +212,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
     } else if (winner === 2) {
       gameOverAnimated.current = true;
       setConsoling(true);
+    } else if (winner === 0) {
+      gameOverAnimated.current = true;
+      setTied(true);
     }
   }, [gameOver, winner]);
 
@@ -259,6 +266,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
     <div className={cn("bg-gray-50 dark:bg-gray-950 flex flex-col items-center py-4 font-sans w-full", showDebug ? "min-h-screen" : "h-screen overflow-hidden")}>
       <Fireworks active={celebrating} onDone={() => setCelebrating(false)} />
       <RobotWins active={consoling} onDone={() => setConsoling(false)} />
+      <Draw active={tied} onDone={() => setTied(false)} />
       {celebrating && (
         <div className="fixed inset-0 z-[101] flex items-center justify-center pointer-events-none">
           <h2 className="animate-win-text text-center font-black uppercase tracking-tight text-brand-green text-5xl sm:text-7xl lg:text-8xl drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
@@ -635,6 +643,16 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                       className="flex-1 bg-sky-100 hover:bg-sky-200 text-sky-700 dark:bg-sky-950 dark:hover:bg-sky-900 dark:text-sky-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
                     >
                       <Bot className="w-4 h-4" /> Lose
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTied(false);
+                        requestAnimationFrame(() => setTied(true));
+                      }}
+                      title="Preview the draw animation"
+                      className="flex-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 dark:bg-emerald-950 dark:hover:bg-emerald-900 dark:text-emerald-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <Handshake className="w-4 h-4" /> Draw
                     </button>
                   </div>
                 </div>
