@@ -15,13 +15,13 @@ CORS(app)
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
-# How long a fresh connection gets to announce a token already in the gripper
-# before we treat its silence as "empty" and send the grab code. An empty
-# gripper is announced by saying nothing, so silence is the only thing that
-# distinguishes it from a GRABBED still in flight -- and asking for a token
-# inside that window is exactly what sends an already-loaded robot off to fetch
-# a second one. Only has to cover connect -> first send on the pendant, which is
-# immediate; it is not waiting for any arm movement.
+# How long a fresh connection gets to report a token already in the gripper
+# before we treat its silence as "empty" and send the grab code. Only pendants
+# that report nothing at all fall back on this: a robot that says GRABBED or
+# EMPTY has answered the question, and the grace is skipped. It exists because
+# asking a silent-but-loaded robot for a token inside that window is exactly
+# what sends it off to fetch a second one. Only has to cover connect -> first
+# send on the pendant, which is immediate; it is not waiting for arm movement.
 CONNECT_ANNOUNCE_GRACE = 2.0
 
 # How often to mention that no robot is on the wire. The detection loop notices
@@ -30,6 +30,15 @@ ROBOT_ABSENT_LOG_INTERVAL = 15.0
 
 # How often to complain that a grab code went out and no GRABBED came back.
 GRAB_ACK_WARN_INTERVAL = 15.0
+
+# How long a grab code stays "possibly still being worked on" after it went out.
+# An EMPTY that arrives inside this window cancels the outstanding grab but does
+# not get the code re-sent yet, because a pendant that reports EMPTY on its way
+# to the pickup station would otherwise collect a second 8 in its buffer -- the
+# double grab the whole handshake exists to prevent. Has to be longer than a
+# pick-up cycle: past it, a robot that really grabbed something has long since
+# said GRABBED, so nothing is ever re-sent to it.
+GRAB_RESEND_COOLDOWN = 10.0
 
 DEFAULT_SETTINGS = {
     "simulation_mode": False,
@@ -122,21 +131,29 @@ class GameState:
         self.robot_move_lock = threading.Lock()
         # True once the grab code went out and no GRABBED has come back yet.
         # Only ever cleared by something that really does invalidate it: the
-        # robot reconnecting (its gripper state is re-announced from scratch) or
-        # the token landing on the board. Not by a reset -- see
-        # reset_game_state().
+        # robot reconnecting (its gripper state is reported from scratch), the
+        # robot saying EMPTY, or the token landing on the board. Not by a reset
+        # -- see reset_game_state().
         self.robot_stone_requested = False
         # True once the robot said GRABBED, either in answer to a grab code or
-        # unprompted right after connecting to announce a token it was already
+        # unprompted right after connecting to report a token it was already
         # holding. The column of a move is held back until then, so the grab
         # code and the column can never sit unread in the pendant's buffer
         # together -- without terminators it would read them as one garbled
-        # message.
+        # message. Cleared when the robot says EMPTY.
         self.robot_stone_held = False
+        # True once the robot has stated its gripper on this connection, either
+        # way round. Until then all we have is silence, which CONNECT_ANNOUNCE_GRACE
+        # has to sit out before reading it as "empty".
+        self.robot_gripper_reported = False
         # When the outstanding grab code went out, so a missing ack can be
         # complained about on a slow beat instead of silently.
         self.robot_stone_requested_time = 0.0
         self.robot_grab_warned = 0.0
+        # Set when an EMPTY cancels a grab code that may still be in progress:
+        # the code is re-sent once the robot has had GRAB_RESEND_COOLDOWN to
+        # finish the pick-up it was asked for, not before.
+        self.robot_grab_blocked_until = 0.0
         self.robot_absent_logged = 0.0
         # When the current robot connection was accepted, so CONNECT_ANNOUNCE_GRACE
         # can be measured from it.
@@ -163,24 +180,49 @@ def on_robot_connected():
     # about the gripper -- the pendant may have restarted empty, or it may have
     # been power-cycled mid-move and still be clamping a token. So we drop what
     # we believed and let the robot state it: GRABBED if it is holding one,
-    # silence if it is not. maintain_robot_stone() waits CONNECT_ANNOUNCE_GRACE
-    # before reading that silence as "empty".
+    # EMPTY if it is not. maintain_robot_stone() falls back on
+    # CONNECT_ANNOUNCE_GRACE only for a pendant that says neither.
     state.robot_stone_requested = False
     state.robot_stone_held = False
+    state.robot_gripper_reported = False
     state.robot_connected_at = time.time()
     state.robot_grab_warned = 0.0
+    state.robot_grab_blocked_until = 0.0
 
 def on_stone_grabbed():
     # Step 4, and also step 2: the same ack serves as the unprompted "I am
-    # already holding one" announcement on a fresh connection, which is why it
-    # is not gated on robot_stone_requested.
+    # already holding one" report on a fresh connection, which is why it is not
+    # gated on robot_stone_requested.
     state.robot_stone_held = True
     state.robot_stone_requested = False
+    state.robot_gripper_reported = True
+    # Whatever grab was outstanding has been answered, so nothing is owed a
+    # cooldown any more.
+    state.robot_grab_blocked_until = 0.0
+
+def on_stone_empty():
+    # The robot states an empty gripper: on connect, after a drop, and after its
+    # reset routine returned a token. Believing it is the point -- it is the one
+    # side that can see the gripper -- so the grab code goes out again from
+    # maintain_robot_stone(), including after a reset, where the backend
+    # deliberately keeps its own belief untouched (see reset_game_state()).
+    if state.robot_stone_requested:
+        # A grab we asked for that the robot has not (yet) turned into a token.
+        # Cancel it so it stops blocking, but let the cooldown decide when to
+        # ask again: an EMPTY reported on the way to the pickup station must not
+        # buy a second 8.
+        state.robot_grab_blocked_until = (
+            state.robot_stone_requested_time + GRAB_RESEND_COOLDOWN
+        )
+    state.robot_stone_requested = False
+    state.robot_stone_held = False
+    state.robot_gripper_reported = True
 
 robot_controller.difficulty_toggle_guard = difficulty_toggle_allowed
 robot_controller.on_difficulty_changed = on_difficulty_changed
 robot_controller.on_robot_connected = on_robot_connected
 robot_controller.on_stone_grabbed = on_stone_grabbed
+robot_controller.on_stone_empty = on_stone_empty
 # Defined further down; the robot's reset button does exactly what the web UI's
 # reset button does.
 robot_controller.on_reset_requested = lambda: reset_game_state()
@@ -376,8 +418,11 @@ def process_board_update():
                             # The token the robot was holding is now on the
                             # board, so it needs a new one -- unless the game
                             # ends right here, which the check below decides.
+                            # Seeing it land settles the gripper question, so a
+                            # cooldown from an earlier EMPTY is stale too.
                             state.robot_stone_requested = False
                             state.robot_stone_held = False
+                            state.robot_grab_blocked_until = 0.0
 
                         winner = check_winner(merged_board)
                         if winner is not None:
@@ -421,6 +466,15 @@ def maintain_robot_stone():
     if state.robot_stone_held:
         # Step 5 is unblocked; nothing to do until the token leaves the gripper.
         return
+    if state.robot_state == "waiting_for_drop":
+        # The column went out and the token is on its way into the board. A
+        # robot that reports EMPTY before the camera sees it land is describing
+        # that drop, not asking for the next token -- and the drop may be the
+        # winning move, in which case an 8 sent now would race the 9/0 result
+        # code and leave two unread codes in the pendant's buffer. The detection
+        # path clears the gripper flags itself once it sees the token, after it
+        # has decided whether the game is over.
+        return
 
     # Step 1: wait for the robot to connect. It is the side that dials us, so a
     # pendant program started before this server was listening never connects
@@ -435,24 +489,29 @@ def maintain_robot_stone():
                   "waiting for the pendant program to dial in")
         return
 
-    # Step 2: give a fresh connection its chance to announce a token already in
-    # the gripper before reading silence as "empty".
-    if time.time() - state.robot_connected_at < CONNECT_ANNOUNCE_GRACE:
+    # Step 2: a fresh connection that has said neither GRABBED nor EMPTY gets a
+    # moment to report a token already in the gripper before its silence is read
+    # as "empty". A robot that reported either way has already answered.
+    if (not state.robot_gripper_reported
+            and time.time() - state.robot_connected_at < CONNECT_ANNOUNCE_GRACE):
         return
 
     if state.robot_stone_requested:
-        # Step 4 outstanding. The grab code is deliberately NOT re-sent: TCP
-        # already redelivers within a connection, and a second 8 overtaking a
-        # slow ack is precisely a double grab. If the connection is actually
-        # dead the socket errors out, the pendant reconnects, and step 2 runs
-        # the handshake again from the top -- that reconnect is the recovery
-        # path, not a timer here.
+        # Step 4 outstanding. The grab code is deliberately NOT re-sent on a
+        # timer: TCP already redelivers within a connection, and a second 8
+        # overtaking a slow ack is precisely a double grab. Only the robot
+        # itself can call the grab off, by reporting EMPTY.
         now = time.time()
         waited = now - state.robot_stone_requested_time
         if waited >= GRAB_ACK_WARN_INTERVAL and now - state.robot_grab_warned >= GRAB_ACK_WARN_INTERVAL:
             state.robot_grab_warned = now
             print(f"[robot] Grab code sent {waited:.0f}s ago, still no GRABBED "
                   "-- is the pendant program acking the grab?")
+        return
+
+    if time.time() < state.robot_grab_blocked_until:
+        # An EMPTY cancelled a grab code that had only just gone out. Wait out
+        # the pick-up it might still be performing before asking again.
         return
 
     # Step 3: as far as the robot has told us, the gripper is empty. Ask.
@@ -676,9 +735,10 @@ def reset_game_state():
     # event, not a robot command -- nothing here tells the arm to open its
     # gripper, so a token it grabbed for the abandoned game is still in there.
     # Clearing the belief would send it off to fetch a second one, which is the
-    # failure this handshake exists to prevent. If the pendant's own reset
-    # routine does return its token, it has to reconnect (or otherwise re-run
-    # step 2) so the game hears about it.
+    # failure this handshake exists to prevent. The robot is the side that knows
+    # what its reset routine did with the token: if that routine put it back, it
+    # says EMPTY, on_stone_empty() clears the belief, and the grab code goes out
+    # for the new game.
 
 @app.route("/api/reset", methods=["POST"])
 def reset_game():

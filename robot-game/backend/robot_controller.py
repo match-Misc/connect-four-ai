@@ -15,13 +15,15 @@ except ImportError as e:
 
 DIFFICULTY_NAMES = ("easy", "medium", "hard", "impossible")
 
-# What the robot sends us: button events, plus the GRABBED handshake ack after
-# it picked up a token. No terminator: the robot's keepalives have none either,
-# so a token has to stand on its own in the stream.
+# What the robot sends us: button events, plus the two gripper reports --
+# GRABBED once it picked a token up, EMPTY while it is holding nothing. No
+# terminator: the robot's keepalives have none either, so a token has to stand
+# on its own in the stream.
 TOGGLE_TOKEN = b"TOGGLE"
 RESET_TOKEN = b"RESET"
 GRABBED_TOKEN = b"GRABBED"
-ROBOT_TOKENS = (TOGGLE_TOKEN, RESET_TOKEN, GRABBED_TOKEN)
+EMPTY_TOKEN = b"EMPTY"
+ROBOT_TOKENS = (TOGGLE_TOKEN, RESET_TOKEN, GRABBED_TOKEN, EMPTY_TOKEN)
 MAX_TOKEN_LEN = max(len(t) for t in ROBOT_TOKENS)
 
 # What we send the robot: one ASCII digit, no terminator. "1".."7" are the
@@ -76,6 +78,14 @@ class RobotController:
         # the same time -- with no terminators it would read them as one
         # garbled message and act on neither.
         self.on_stone_grabbed: Optional[Callable[[], None]] = None
+
+        # EMPTY: the other half of the gripper report, fired whenever the robot
+        # states it is holding nothing -- on connect, after its reset routine
+        # put a token back, or after a drop. It is what stops a wrong belief in
+        # a token from outliving the connection: without it, an empty robot the
+        # game thinks is loaded waits for a column that is being withheld until
+        # it acks a grab it was never asked for.
+        self.on_stone_empty: Optional[Callable[[], None]] = None
 
         if not self.simulate:
             self.start_robot_server()
@@ -272,6 +282,8 @@ class RobotController:
             self.request_reset()
         elif token == GRABBED_TOKEN:
             self.handle_stone_grabbed()
+        elif token == EMPTY_TOKEN:
+            self.handle_stone_empty()
 
     def handle_stone_grabbed(self):
         print("Robot confirmed token grab")
@@ -296,6 +308,19 @@ class RobotController:
                 print(f"Failed to send queued column: {e}")
                 with self.robot_conn_lock:
                     self.pending_column = pending
+
+    def handle_stone_empty(self):
+        print("Robot reports an empty gripper")
+        if self.on_stone_empty:
+            try:
+                self.on_stone_empty()
+            except Exception as e:
+                print(f"on_stone_empty callback failed: {e}")
+
+        # A queued column is deliberately left queued: the robot still owes us a
+        # grab before it can act on one, and handle_stone_grabbed() is where it
+        # goes out. Sending it to an empty gripper is the garbled-buffer case
+        # this queue exists to avoid.
 
     def clear_pending_column(self):
         """Forget a queued column, e.g. because its game was reset."""

@@ -30,6 +30,7 @@ Communication Protocol (No Terminators):
   - `TOGGLE`: The physical difficulty button was pressed.
   - `RESET`: The physical reset button was pressed.
   - `GRABBED`: The robot is holding a token and is ready for a column command.
+  - `EMPTY`: The robot's gripper is holding nothing.
 
 ### The Grab Handshake
 
@@ -41,14 +42,14 @@ no terminators, the pendant would read them as one garbled message).
 
 1. **Wait for the robot.** The robot is the side that dials in. Until it
    connects, the backend just waits and logs on a slow beat.
-2. **The robot announces its gripper.** Immediately after connecting, the robot
-   sends `GRABBED` *if it is already holding a token*, and sends nothing if it
-   is not. This is what lets the game survive a backend restart or a pendant
-   reconnect mid-game without sending an already-loaded arm off to fetch a
-   second token.
-3. **The backend asks for a token.** If no announcement arrives within
-   `CONNECT_ANNOUNCE_GRACE` (2 s), the gripper is taken to be empty and `8` goes
-   out.
+2. **The robot reports its gripper.** Immediately after connecting, the robot
+   sends `GRABBED` if it is already holding a token, or `EMPTY` if it is not.
+   This is what lets the game survive a backend restart or a pendant reconnect
+   mid-game without sending an already-loaded arm off to fetch a second token.
+   A pendant that reports neither is given `CONNECT_ANNOUNCE_GRACE` (2 s), after
+   which its silence is read as an empty gripper.
+3. **The backend asks for a token.** `8` goes out as soon as the gripper is
+   known (or assumed) to be empty.
 4. **The robot acks.** It picks up a token and sends `GRABBED`.
 5. **Only now is a column sent.** `1`–`7` goes out, and the robot places the
    token.
@@ -56,20 +57,29 @@ no terminators, the pendant would read them as one garbled message).
    gripper counts as empty again and step 3 starts over. This continues until
    the game is won, lost, or reset.
 
+`EMPTY` may be sent at any point, not just on connect — it is the robot's way of
+correcting the backend whenever the two have drifted apart. Whenever it arrives
+during a running game, the backend drops its belief in the token and step 3 sends
+`8` again.
+
 > [!IMPORTANT]
-> Step 2 is what the pendant program has to get right: an unprompted `GRABBED`
-> on connect whenever a token is already clamped. An empty gripper is signalled
-> by staying silent.
+> Step 2 is what the pendant program has to get right: a gripper report on
+> connect, every time, `GRABBED` or `EMPTY`.
 
 > [!NOTE]
-> `8` is never re-sent while an ack is outstanding — a second grab code
-> overtaking a slow `GRABBED` is exactly how the robot ends up fetching two
-> tokens. If the connection is genuinely dead, the socket errors out, the
-> pendant reconnects, and the handshake restarts from step 2. Likewise, a reset
-> (from the web UI or the robot's button) does **not** clear what the backend
-> believes about the gripper: nothing in a reset commands the arm to open, so a
-> token it was holding is still there. If the pendant's own reset routine
-> returns its token, it must reconnect so step 2 runs again.
+> `8` is never re-sent on a timer while an ack is outstanding — a second grab
+> code overtaking a slow `GRABBED` is exactly how the robot ends up fetching two
+> tokens. Only the robot can call an outstanding grab off, by reporting `EMPTY`,
+> and even then the re-send waits until `GRAB_RESEND_COOLDOWN` (10 s) after the
+> original code, so an `EMPTY` reported on the way to the pickup station cannot
+> buy a second token either.
+
+> [!NOTE]
+> A reset (from the web UI or the robot's button) does **not** by itself clear
+> what the backend believes about the gripper: nothing in a reset commands the
+> arm to open, so a token it was holding is still there. The robot is the side
+> that knows what its own reset routine did — if that routine puts the token
+> back, it sends `EMPTY`, and the backend then sends `8` for the new game.
 
 ## Game Loop Logic
 
