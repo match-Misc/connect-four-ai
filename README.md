@@ -43,11 +43,12 @@ Before starting the setup, the following items should be prepared:
 
 ---
 
-## Additional Information
+## Additional Information and Bug Fixing
 
 If you run into issues or need to perform basic operations, refer to the following guides:
 
 - **[Basic Skills Guide](./docs/basic-skills.md)**: Covers manual movement, turning the robots on/off, and using the UR user interface.
+- **[Understanding the UR Robot Program](./docs/robot-program.md)**: Explains the robot program. Covers teaching positions, connection to the NUC, DIOs.
 - **[FAQ](./docs/faq.md)**: Common questions and troubleshooting.
 
 
@@ -59,5 +60,6 @@ Comprehensive documentation is available in the [`docs/`](./docs/) folder:
 - **[Software Setup Guide](./docs/software-setup.md)** - Step-by-step instructions for setting up the development environment and installing dependencies
 - **[Hardware Setup Guide](./docs/hardware-setup.md)** - Physical setup instructions for robotic implementations and hardware requirements
 - **[Basic Skills](./docs/basic-skills.md)** - Basic operations for the robotic system
+- **[Understanding the UR Robot Program](./docs/robot-program.md)** - How the UR program works, teaching the tray and board positions, socket connection to the NUC, and the digital I/Os
 
 

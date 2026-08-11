@@ -77,7 +77,8 @@ INSERT IMAGE OF THE THREE BUTTONS ON THE BACK LEFT OF THE MIR600
 1. Make sure you have unlocked the UR robot. See: [Unlocking the UR Robot](#unlocking-the-ur-robot)
 2. On the UR touch screen, tap the **"Move"** tab located in the top left corner.
 3. You can now jog the robot manually. Use the controls on the right side of the screen to move the robot either in **Joint Space** (controlling individual joints) or **Cartesian Space** (moving the tool center point linearly).
-   > [INSERT SCREENSHOT OF THE MOVE TAB]
+   
+<img src="./images/ur_screenshots/move_robot.png" alt="Move robot" width="600"/>
 
 [⬆️ Back to Step-by-Step Guide](./step-by-step-guide.md)
 
@@ -87,6 +88,9 @@ INSERT IMAGE OF THE THREE BUTTONS ON THE BACK LEFT OF THE MIR600
 
 1. On the UR touch screen, tap the **Open** button (a folder icon in the top header).
 2. Select the correct **Connect Four program file** (`.urp`) from the file manager and tap **Open**.
+
+<img src="./images/ur_screenshots/load_program.png" alt="Load Program" width="600"/>
+
 3. If prompted to load the associated installation file (`.installation`), tap **Yes** to confirm.
 4. Once loaded, press the **Play** (▶️) button at the bottom of the screen to start the program.
 
