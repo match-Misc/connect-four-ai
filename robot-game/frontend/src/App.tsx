@@ -12,6 +12,15 @@ const API_BASE = `http://${window.location.hostname}:8000/api`;
 /** Shared empty value, so "no invalid stones" is the same array every poll. */
 const NO_STONES: number[][] = [];
 
+/** Readable names for the backend's robot_state values. */
+const ROBOT_STATE_LABELS: Record<string, string> = {
+  idle: 'Idle',
+  analyzing: 'Analyzing',
+  thinking: 'Thinking',
+  moving: 'Moving',
+  waiting_for_drop: 'Waiting for drop',
+};
+
 /** Deep equality for the small number grids the backend sends. */
 function sameGrid(a: number[][], b: number[][]) {
   if (a === b) return true;
@@ -66,6 +75,12 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [robotTargetCol, setRobotTargetCol] = useState<number | null>(null);
   const [tcpConnected, setTcpConnected] = useState<boolean>(false);
   const [nfcConnected, setNfcConnected] = useState<boolean>(false);
+  // Robot handshake signals, straight from the pendant: whether a grab code is
+  // outstanding, whether the robot said it holds a token, and how many times it
+  // has dialled in this session.
+  const [grabRequested, setGrabRequested] = useState<boolean>(false);
+  const [stoneHeld, setStoneHeld] = useState<boolean>(false);
+  const [robotConnects, setRobotConnects] = useState<number>(0);
   const [celebrating, setCelebrating] = useState<boolean>(false);
   const [consoling, setConsoling] = useState<boolean>(false);
 
@@ -80,6 +95,15 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   // The board state is polled, so the result arrives over and over — only the
   // first one of a game should set off an end-of-game animation.
   const gameOverAnimated = useRef(false);
+  // Clicking a difficulty sets it locally and POSTs it, but the board-state poll
+  // runs every 150ms: a response that left the backend before the POST landed
+  // still carries the old difficulty, and it used to overwrite the click — which
+  // then re-fired the config effect and posted the old value back, losing the
+  // change for good. So a difficulty we just chose is held until the backend
+  // echoes it. The robot's toggle button still comes through: the hold only
+  // covers our own in-flight change, and it expires regardless, so a POST that
+  // never landed cannot freeze the UI on a value the backend does not have.
+  const pendingDifficulty = useRef<{ value: string; until: number } | null>(null);
 
   const fetchBoardState = async () => {
     try {
@@ -106,13 +130,28 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
         setAiEnabled(data.ai_enabled);
       }
       if (data.difficulty !== undefined) {
-        setDifficulty(data.difficulty);
+        const pending = pendingDifficulty.current;
+        if (pending && data.difficulty !== pending.value && Date.now() < pending.until) {
+          // Stale response from before our POST landed; keep showing the click.
+        } else {
+          pendingDifficulty.current = null;
+          setDifficulty(data.difficulty);
+        }
       }
       if (data.tcp_connected !== undefined) {
         setTcpConnected(data.tcp_connected);
       }
       if (data.nfc_connected !== undefined) {
         setNfcConnected(data.nfc_connected);
+      }
+      if (data.grab_requested !== undefined) {
+        setGrabRequested(data.grab_requested);
+      }
+      if (data.stone_held !== undefined) {
+        setStoneHeld(data.stone_held);
+      }
+      if (data.robot_connects !== undefined) {
+        setRobotConnects(data.robot_connects);
       }
       if (data.nfc_data !== undefined) {
         setNfcData(prev => {
@@ -205,6 +244,9 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       });
     } catch (e) {
       console.error('Failed to update config:', e);
+      // The difficulty in that body never reached the backend, so stop holding
+      // the polled value back instead of waiting out the expiry.
+      pendingDifficulty.current = null;
     }
   };
 
@@ -269,7 +311,10 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
               {['easy', 'medium', 'hard', 'impossible'].map(level => (
                 <button
                   key={level}
-                  onClick={() => setDifficulty(level)}
+                  onClick={() => {
+                    pendingDifficulty.current = { value: level, until: Date.now() + 2000 };
+                    setDifficulty(level);
+                  }}
                   className={cn(
                     "px-5 py-2.5 lg:px-7 lg:py-3.5 rounded-lg text-lg lg:text-xl font-bold capitalize transition-all",
                     difficulty === level ? "bg-white dark:bg-gray-700 shadow-sm text-brand-green" : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
@@ -289,29 +334,6 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                 className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-950 dark:hover:bg-red-900 dark:text-red-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm"
               >
                 Reset
-              </button>
-
-              {/* TEMPORARY: previews the end-of-game animations without playing a game. Remove once they are signed off. */}
-              <button
-                onClick={() => {
-                  setCelebrating(false);
-                  // Remount on the next frame so a second click restarts the show.
-                  requestAnimationFrame(() => setCelebrating(true));
-                }}
-                title="Temporary: preview the win animation"
-                className="bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-950 dark:hover:bg-amber-900 dark:text-amber-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm flex items-center gap-2"
-              >
-                <Sparkles className="w-5 h-5 lg:w-6 lg:h-6" /> Win
-              </button>
-              <button
-                onClick={() => {
-                  setConsoling(false);
-                  requestAnimationFrame(() => setConsoling(true));
-                }}
-                title="Temporary: preview the loss animation"
-                className="bg-sky-100 hover:bg-sky-200 text-sky-700 dark:bg-sky-950 dark:hover:bg-sky-900 dark:text-sky-300 px-6 py-3 lg:px-8 lg:py-4 rounded-xl text-lg lg:text-xl font-bold transition-colors shadow-sm flex items-center gap-2"
-              >
-                <Bot className="w-5 h-5 lg:w-6 lg:h-6" /> Lose
               </button>
             </div>
           </div>
@@ -435,12 +457,65 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                         robotState === 'idle' ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" :
                         robotState === 'analyzing' ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 animate-pulse" :
                         robotState === 'thinking' ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 animate-pulse" :
+                        robotState === 'waiting_for_drop' ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 animate-pulse" :
                         "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300 animate-bounce"
                       )}>
-                        {robotState}
+                        {ROBOT_STATE_LABELS[robotState] ?? robotState}
                       </span>
                     </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-bold">Connection</span>
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider",
+                        simulationMode ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" :
+                        tcpConnected ? "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300" :
+                        "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+                      )}>
+                        {simulationMode ? "Simulated" : tcpConnected ? "Connected" : "Disconnected"}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-bold">Gripper</span>
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider",
+                        simulationMode ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" :
+                        stoneHeld ? "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300" :
+                        grabRequested ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 animate-pulse" :
+                        "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                      )}>
+                        {simulationMode ? "N/A" : stoneHeld ? "Token held" : grabRequested ? "Grab sent…" : "Empty"}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-bold">Target Column</span>
+                      <span className="text-sm font-bold text-gray-800 dark:text-gray-100">
+                        {robotTargetCol !== null ? robotTargetCol + 1 : '—'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-bold">Connects</span>
+                      <span className="text-sm font-bold text-gray-800 dark:text-gray-100">{robotConnects}</span>
+                    </div>
                   </div>
+
+                  {/* The move is parked in run_robot_move() until the pendant acks the
+                      grab, so this pairing is the one stall the panel can name outright. */}
+                  {!simulationMode && grabRequested && !stoneHeld && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950 dark:border-amber-900 dark:text-amber-300 text-xs px-3 py-2 rounded-lg flex items-start gap-2">
+                      <span className="font-bold">⚠</span>
+                      <p>Grab code sent, waiting for the robot to confirm it holds a token. Any computed column is held back until it does.</p>
+                    </div>
+                  )}
+                  {!simulationMode && !tcpConnected && (
+                    <div className="bg-red-50 border border-red-200 text-red-800 dark:bg-red-950 dark:border-red-900 dark:text-red-300 text-xs px-3 py-2 rounded-lg flex items-start gap-2">
+                      <span className="font-bold">⚠</span>
+                      <p>No pendant connected. The robot dials in to the backend — start its program to reconnect.</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
@@ -531,8 +606,40 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                     </div>
                   )}
                 </div>
+
+                <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+                  <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                    <Bug size={20} className="text-purple-500" /> Testing
+                  </h2>
+
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Preview the end-of-game animations without playing a game.</p>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setCelebrating(false);
+                        // Remount on the next frame so a second click restarts the show.
+                        requestAnimationFrame(() => setCelebrating(true));
+                      }}
+                      title="Preview the win animation"
+                      className="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-950 dark:hover:bg-amber-900 dark:text-amber-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4" /> Win
+                    </button>
+                    <button
+                      onClick={() => {
+                        setConsoling(false);
+                        requestAnimationFrame(() => setConsoling(true));
+                      }}
+                      title="Preview the loss animation"
+                      className="flex-1 bg-sky-100 hover:bg-sky-200 text-sky-700 dark:bg-sky-950 dark:hover:bg-sky-900 dark:text-sky-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <Bot className="w-4 h-4" /> Lose
+                    </button>
+                  </div>
+                </div>
               </div>
-              
+
             </div>
           )}
         </div>
