@@ -111,7 +111,7 @@ export function RobotWins({ active, duration = 7000, onDone }: RobotWinsProps) {
             Du hast leider verloren.
           </p>
           <p className="mt-3 lg:mt-5 font-bold text-brand-green text-2xl sm:text-3xl lg:text-4xl">
-            Versuche es in der nächsten Runde nochmal
+            Versuche es in der nächsten Runde nochmal.
           </p>
         </div>
       </div>

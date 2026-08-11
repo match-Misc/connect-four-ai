@@ -9,6 +9,22 @@ import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles, Nfc } from 'lu
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
 
+/** Shared empty value, so "no invalid stones" is the same array every poll. */
+const NO_STONES: number[][] = [];
+
+/** Deep equality for the small number grids the backend sends. */
+function sameGrid(a: number[][], b: number[][]) {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let r = 0; r < a.length; r++) {
+    if (a[r].length !== b[r].length) return false;
+    for (let c = 0; c < a[r].length; c++) {
+      if (a[r][c] !== b[r][c]) return false;
+    }
+  }
+  return true;
+}
+
 function RobotArmIcon({ size = 24, className = "" }: { size?: number, className?: string }) {
   return (
     <svg 
@@ -69,14 +85,20 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
     try {
       const res = await fetch(`${API_BASE}/board-state`);
       const data = await res.json();
-      setBoard(data.board);
+      // Reusing the previous array when nothing moved keeps React from
+      // re-rendering the grid on every poll. That matters most during the
+      // end-of-game animations: the board is frozen then, so this leaves the
+      // main thread to the fireworks instead of reconciling 42 unchanged cells
+      // several times a second.
+      if (data.board) setBoard(prev => (sameGrid(prev, data.board) ? prev : data.board));
       setTurn(data.turn);
       setRobotState(data.robot_state);
       setSimulationMode(data.simulation_mode);
       setGameOver(data.game_over || false);
       setWinner(data.winner || null);
       setErrorMsg(data.error_msg || null);
-      setInvalidStones(data.invalid_stones || []);
+      const stones = data.invalid_stones || NO_STONES;
+      setInvalidStones(prev => (sameGrid(prev, stones) ? prev : stones));
       if (data.debounce_time !== undefined) {
         setDebounceTime(data.debounce_time);
       }
