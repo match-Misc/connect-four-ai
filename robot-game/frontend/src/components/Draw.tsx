@@ -77,7 +77,8 @@ export function Draw({ active, duration = 7000, onDone }: DrawProps) {
       )}
     >
       {/* Dims the board so the two tokens carry the moment. The game is over,
-          and the overlay passes clicks through, so Reset stays reachable. */}
+          and the overlay passes clicks through, so the header controls stay
+          reachable. */}
       <div className="absolute inset-0 bg-gray-950/55 animate-overlay-scrim" />
 
       {/* Tokens drift upwards: rising reads as hopeful. */}

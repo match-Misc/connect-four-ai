@@ -76,7 +76,8 @@ export function RobotWins({ active, duration = 7000, onDone }: RobotWinsProps) {
       )}
     >
       {/* Dims the board so the robot carries the moment. The game is over, and
-          the overlay passes clicks through, so Reset stays reachable. */}
+          the overlay passes clicks through, so the header controls stay
+          reachable. */}
       <div className="absolute inset-0 bg-gray-950/55 animate-overlay-scrim" />
 
       {/* Tokens drift upwards: rising reads as hopeful, falling reads as defeat. */}

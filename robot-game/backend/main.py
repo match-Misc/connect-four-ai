@@ -40,6 +40,12 @@ GRAB_ACK_WARN_INTERVAL = 15.0
 # said GRABBED, so nothing is ever re-sent to it.
 GRAB_RESEND_COOLDOWN = 10.0
 
+# Shown verbatim in the GUI's error banner, so it is German like the rest of the
+# interface. A named constant because the gravity check both sets and clears it
+# by value -- two copies of the text could drift apart and leave the banner
+# stuck on screen.
+GRAVITY_ERROR = "Schwerkraft-Prüfung fehlgeschlagen! (Hand im Weg oder schwebender Stein)"
+
 DEFAULT_SETTINGS = {
     "simulation_mode": False,
     "debounce_time": 0.5,
@@ -342,10 +348,10 @@ def process_board_update():
             break
             
     if gravity_violation:
-        state.error_msg = "Gravity check failed! (Hand in the way or floating chip)"
+        state.error_msg = GRAVITY_ERROR
     else:
         # If gravity is resolved but we had a gravity error, clear it immediately
-        if state.error_msg == "Gravity check failed! (Hand in the way or floating chip)":
+        if state.error_msg == GRAVITY_ERROR:
             state.error_msg = None
             
         # 2. Debounce logic
@@ -395,18 +401,18 @@ def process_board_update():
                             new_stones.append([r, c, merged_board[r][c]])
                             
                 if missing_stones:
-                    state.error_msg = "Stone(s) removed or altered unexpectedly! Please restore the board."
+                    state.error_msg = "Steine wurden unerwartet entfernt oder verändert! Bitte das Spielfeld wiederherstellen."
                     state.invalid_stones = []
                 elif len(new_stones) > 1:
-                    state.error_msg = "Too many stones inserted at once! Please remove the extra stones."
+                    state.error_msg = "Zu viele Steine auf einmal eingeworfen! Bitte die überzähligen Steine entfernen."
                     state.invalid_stones = [[r, c] for r, c, p in new_stones]
                 elif len(new_stones) == 1:
                     r, c, p = new_stones[0]
                     if state.match_state != "in_game":
-                        state.error_msg = "Game is not active. Please reset the game."
+                        state.error_msg = "Das Spiel läuft nicht. Bitte ein neues Spiel starten."
                         state.invalid_stones = [[r, c]]
                     elif (state.turn == "human" and p != 1) or (state.turn == "robot" and p != 2):
-                        state.error_msg = f"Wrong token inserted! Expected Player {1 if state.turn == 'human' else 2} ({state.turn})."
+                        state.error_msg = f"Falscher Stein eingeworfen! Erwartet: {'Mensch' if state.turn == 'human' else 'Roboter'} (Spieler {1 if state.turn == 'human' else 2})."
                         state.invalid_stones = [[r, c]]
                     else:
                         # Valid single move!
