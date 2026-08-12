@@ -326,7 +326,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
           </div>
 
           {/* Difficulty Selector */}
-          <div className="flex flex-wrap justify-center gap-1 bg-gray-100 dark:bg-gray-800 p-2 rounded-2xl">
+          <div className="flex flex-wrap justify-center gap-1 bg-gray-100 dark:bg-gray-800 p-2 rounded-2xl mt-4 lg:mt-8">
             {DIFFICULTIES.map(({ value, label }) => (
               <button
                 key={value}
