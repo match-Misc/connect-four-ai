@@ -122,6 +122,9 @@ The **UR10 2** [INSERT IMAGE LINK HERE] is not used in the Connect Four game and
 **Steps to move UR10 2:**
 1. Access the UR User Interface by switching through the KVM switch and ensure you are controlling **UR10 2**.
 2. Use the **Move** tab to jog UR10 2 safely to the side so that its workspace does not overlap with UR10 1.
+
+<img src="./images/ur_screenshots/move_robot.png" alt="Move robot" width="600"/>
+
 3. See reference image for a pose that does not interfere with the game
 INSERT IMAGE HERE LATER
 
@@ -146,12 +149,11 @@ INSERT IMAGE HERE LATER
 **Important:** Before proceeding, verify that the correct program and installation are loaded. See: [Load UR Installation and UR program](./basic-skills.md#load-ur-installation-and-ur-program).
 
 1. On the UR touch screen, tap the **"Program"** button in the top left corner.
-2. For safety, reduce the robot's speed by dragging the speed slider (at the bottom of the screen) down to approximately **20%**.
-3. Press the **"Play"** button located in the bottom right corner, then select **"Play from beginning: Robot Program"**.
-4. You will be prompted to move the robot to its starting position. 
+2. Press the **"Play"** button located in the bottom right corner, then select **"Play from beginning: Robot Program"**.
+3. You will be prompted to move the robot to its starting position. 
    - **Caution:** Make sure the robot's path is completely clear of obstacles.
    - Press and hold the **"Move robot to: ..."** button. The robot will move *only* while you are holding the button.
-5. Once the robot reaches the start position, a prompt will appear. Tap **"Play from: Robot Program"** to fully start the program. 
+4. Once the robot reaches the start position, a prompt will appear. Tap **"Play from: Robot Program"** to fully start the program. 
    - *Note:* The robot may immediately pick up a stone. This is normal behavior indicating it is successfully connected to the NUC and waiting for commands.
 
 The robot is now actively waiting for TCP commands from the NUC to determine where to place the stones.
