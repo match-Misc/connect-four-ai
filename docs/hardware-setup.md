@@ -22,6 +22,8 @@ The components to be mounted on the plate are color-coded as follows:
 - 🟠 **Orange (Black Chip Holder)**: The black chips are placed here in an orderly fashion so the robot can pick them up.
 - 🔴 **Red (RealSense Camera Mount)**: The slanted sides must face away from the game board.
 - 🔵 **Blue (UR Robot Arm)**: The Universal Robot (UR) arm that is used to play the game.
+- 🟩 **Light Green (Difficulty Button)**: Used to set the difficulty. Note: Currently, there is no way to screw this down.
+- 🟦 **Dark Blue (Chip Tower)**: Where the green chips for the player are inserted.
 
 <img src="./images/game-overview-nobackground.png" alt="Overview of the game setup on MuR620d" width="400" />
 
@@ -35,6 +37,9 @@ To ensure all hardware components are properly powered and connected, follow the
 2. **Connect Power Cables:** Retrieve the appropriate power cables from the grey equipment box and plug the MuR620, NUC, and monitor into the extension cord.
 3. **Connect Peripherals:** Plug the keyboard and mouse into the USB ports on the NUC.
 4. **Connect the Monitor:** Use the provided display cable from the grey equipment box to connect the monitor to the NUC.
+5. **Connect to LAN:** Connect the NUC to the LAN of the MuR620. The cable needs to be routed through the back left door of the MiR. Looking in there, you can see the switch which is displayed on the image below.
+   
+   <img src="./images/network-switch-connection.jpg" alt="Switch inside the back left door of the MiR" width="300" />
 
 [⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Getting the NUC ready](#getting-the-nuc-ready)
 
@@ -141,7 +146,8 @@ INSERT IMAGE HERE LATER
 <img src="./images/schunk-gripper-mointingholes.jpg" alt="Schunk Gripper Mounting Holes" width="400" />
 
 4. Mount the aluminium plate directly to the UR10 1 (see the image below).
-5. Mount the Schunk gripper to the aluminium plate. Using the diagonal holes going through the Schunk gripper 
+5. Mount the Schunk gripper to the aluminium plate. Using the diagonal holes going through the Schunk gripper.
+   > **Important:** You MUST ensure the gripper is mounted in the correct orientation! Look carefully at the image to match it exactly.
 
 [⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Start the Game](#start-the-game)
 
