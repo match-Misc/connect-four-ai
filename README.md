@@ -16,8 +16,8 @@ Follow these steps in order to set up the Connect Four game:
 
 Before starting the setup, the following items should be prepared:
 - **MuR620d** (check the naming on the back of the mobile robot)
-- **Grey Box** (labeled "Schlag den Roboter - Vier Gewinnt")
-- **Schunk Gripper** (check for the naming and brand)
+- **Grey Box** (labeled "Schlag den Roboter - Vier Gewinnt" in one of the cabinets in Scale)
+- **Schunk Co-act Gripper** (See [Mount Schunk Gripper to UR10 1](./docs/hardware-setup.md#mount-schunk-gripper-to-ur10-1) for image)
 
 ### 2. Hardware Assembly
 

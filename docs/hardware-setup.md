@@ -11,19 +11,19 @@ The first step is to bring the MuR620 to its designated operating location. This
 
 ## Mounting of hardware components
 To ensure the robot program works without modifications, all hardware components **must be mounted at the exact same screw holes**. 
-The image below shows a top view of the MuR620 and its mounting grid plate. Please pay attention to the orientation: **the right side of the image is the front** of the robot. 
+The image below shows a top view of the MuR620 and its mounting grid plate. Please pay attention to the orientation: **the right side of the image is the front** of the robot. **Notice:** There is also a photograph of the real hardware setup further below that you can use to compare and verify your mounting. 
 
 <img src="./images/connect-four-mounting-layout-top-view.png" alt="Connect Four Mounting Layout Top View" width="600" />
 
 Ideally, you should start counting the holes on the grid plate from the bottom right edge to determine exactly which hole each component should be screwed into. For example, the front screw of the Connect Four board must be fastened in the first row, fourth column from the right.
 The components to be mounted on the plate are color-coded as follows:
-- 🟢 **Green (Connect Four Board)**: The surface with the black sticker must face the RealSense camera.
+- 🟢 **Green (Connect Four Board)**: 🚨 **CRITICAL: The surface with the black sticker MUST face the RealSense camera!** 🚨
 - 🟣 **Purple (Chip Collection Tray)**: Prevents chips from falling onto the floor when the game board's gate is opened.
 - 🟠 **Orange (Black Chip Holder)**: The black chips are placed here in an orderly fashion so the robot can pick them up.
 - 🔴 **Red (RealSense Camera Mount)**: The slanted sides must face away from the game board.
 - 🔵 **Blue (UR Robot Arm)**: The Universal Robot (UR) arm that is used to play the game.
 - 🟩 **Light Green (Difficulty Button)**: Used to set the difficulty. Note: Currently, there is no way to screw this down.
-- 🟦 **Dark Blue (Chip Tower)**: Where the green chips for the player are inserted.
+- 🟦 **Dark Blue (Chip Tower)**: Where the green chips for the player are inserted. **Notice:** The outlet for the chips (at the bottom of the tower) should be off the top of the MiR600 facing towards the player, and the screws should be at the back of the tower.
 
 <img src="./images/game-overview-nobackground.png" alt="Overview of the game setup on MuR620d" width="400" />
 
