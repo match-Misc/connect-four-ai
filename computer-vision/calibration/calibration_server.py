@@ -67,6 +67,9 @@ class UnifiedCalibrator:
         self.autocalibrate_progress = 0.0
         self.autocalibrate_results = []
         self.empty_scan_results = {}
+        self.is_color_autocalibrating = False
+        self.color_autocalibrate_progress = 0.0
+        self.color_autocalibrate_result = None
         self.ui_mode = "define_board"  # define_board, color_calibration, detection_calibration
         
         self.cached_grid_coords = None
@@ -206,21 +209,26 @@ class UnifiedCalibrator:
             except:
                 pass
 
-    def adjust_image(self, frame):
-        if self.saturation != 100:
+    @staticmethod
+    def _adjust_image_with_params(frame, contrast, saturation, brightness):
+        """Apply the same image processing used by token detection for a candidate setting."""
+        if saturation != 100:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             h, s, v = cv2.split(hsv)
             # Use cv2 for multiplication to avoid holding the Python GIL
-            s = cv2.multiply(s, self.saturation / 100.0)
+            s = cv2.multiply(s, saturation / 100.0)
             hsv = cv2.merge([h, s, v])
             frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
             
-        if self.contrast != 100 or self.brightness != 0:
-            alpha = self.contrast / 100.0
-            beta = self.brightness
+        if contrast != 100 or brightness != 0:
+            alpha = contrast / 100.0
+            beta = brightness
             frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
             
         return frame
+
+    def adjust_image(self, frame):
+        return self._adjust_image_with_params(frame, self.contrast, self.saturation, self.brightness)
 
     def draw_corners(self, frame):
         for i, corner in enumerate(self.corners):
@@ -332,9 +340,9 @@ class UnifiedCalibrator:
                                     cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, (255, 255, 255), 2)
                         elif self.ui_mode == "color_calibration":
                             if col % 2 == 0: # Player 1
-                                color = tuple(self.player1_color) if self.calibration_complete and self.player1_color else (0, 0, 255)
+                                color = tuple(self.player1_color) if self.calibration_complete and self.player1_color else (0, 0, 0)
                             else: # Player 2
-                                color = tuple(self.player2_color) if self.calibration_complete and self.player2_color else (0, 255, 255)
+                                color = tuple(self.player2_color) if self.calibration_complete and self.player2_color else (0, 255, 0)
                             cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, color, 2)
                             # Draw inner solid circle for clarity
                             cv2.circle(adjusted_frame, (x, y), max(2, self.hole_diameter // 2 - 4), color, -1)
@@ -398,35 +406,98 @@ class UnifiedCalibrator:
         if len(self.corners) != 4 or self.current_color_frame is None:
             self.status_text = "Define corners and ensure camera is running."
             return False
-        adjusted_frame = self.adjust_image(self.current_color_frame)
-        corners = np.array(self.corners)
-        dst_points = np.array([[0, 0], [6 * self.h_spacing, 0], [0, 5 * self.v_spacing], [6 * self.h_spacing, 5 * self.v_spacing]], dtype=np.float32)
-        src_points = corners.astype(np.float32)
-        M = cv2.getPerspectiveTransform(src_points, dst_points)
-        player1_samples = []
-        player2_samples = []
-        for col in range(7):
-            for row in range(6):
-                grid_x = col * self.h_spacing
-                grid_y = row * self.v_spacing
-                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
-                transformed = cv2.perspectiveTransform(grid_point.reshape(1, 1, 2), np.linalg.inv(M))
-                x, y = transformed[0, 0].astype(int)
-                if 0 <= x < adjusted_frame.shape[1] and 0 <= y < adjusted_frame.shape[0]:
-                    radius = max(3, self.hole_diameter // 2 - 2)
-                    roi = adjusted_frame[max(0, y - radius):min(adjusted_frame.shape[0], y + radius), max(0, x - radius):min(adjusted_frame.shape[1], x + radius)]
-                    if roi.size > 0:
-                        avg_color = cv2.mean(roi)[:3]
-                        if col % 2 == 0:
-                            player1_samples.append(avg_color)
-                        else:
-                            player2_samples.append(avg_color)
-        if player1_samples and player2_samples:
+        with self.frame_lock:
+            frame = self.current_color_frame.copy()
+        adjusted_frame = self.adjust_image(frame)
+        samples, labels = self._reference_slot_samples(adjusted_frame)
+        player1_samples = samples[labels == 0]
+        player2_samples = samples[labels == 1]
+        if len(player1_samples) and len(player2_samples):
             self.player1_color = np.mean(player1_samples, axis=0).astype(int).tolist()
             self.player2_color = np.mean(player2_samples, axis=0).astype(int).tolist()
             self.calibration_complete = True
             self.status_text = "Colors calibrated."
         return True
+
+    def _reference_slot_samples(self, frame):
+        """Return BGR means and expected labels from the alternating colour reference slots."""
+        samples, labels = [], []
+        radius = max(3, self.hole_diameter // 2 - 2)
+        for index, (x, y) in enumerate(self.get_hole_coordinates()):
+            if not (radius <= x < frame.shape[1] - radius and radius <= y < frame.shape[0] - radius):
+                continue
+            roi = frame[y - radius:y + radius + 1, x - radius:x + radius + 1]
+            mask = np.zeros(roi.shape[:2], dtype=np.uint8)
+            cv2.circle(mask, (radius, radius), radius, 255, -1)
+            samples.append(np.array(cv2.mean(roi, mask=mask)[:3], dtype=np.float32))
+            # The colour-calibration overlay assigns even columns to Player 1 (black)
+            # and odd columns to Player 2 (green).
+            labels.append((index % 7) % 2)
+        return np.asarray(samples, dtype=np.float32), np.asarray(labels, dtype=np.int8)
+
+    @staticmethod
+    def _colour_calibration_score(samples, labels):
+        """Score labelled slots with leave-one-out nearest-colour classification."""
+        if len(samples) < 4 or len(np.unique(labels)) != 2:
+            return None
+        correct = 0
+        margins = []
+        for i, sample in enumerate(samples):
+            means = []
+            for label in (0, 1):
+                group = samples[(labels == label) & (np.arange(len(samples)) != i)]
+                if len(group) == 0:
+                    return None
+                means.append(np.mean(group, axis=0))
+            distances = np.array([np.linalg.norm(sample - mean) for mean in means])
+            expected = labels[i]
+            correct += int(np.argmin(distances) == expected)
+            margins.append(distances[1 - expected] - distances[expected])
+        # Accuracy is primary; the margin gives stable tie-breaking between settings.
+        return correct, float(np.mean(margins))
+
+    def _autocalibrate_colours_thread(self):
+        try:
+            with self.frame_lock:
+                frame = None if self.current_color_frame is None else self.current_color_frame.copy()
+            if len(self.corners) != 4 or frame is None:
+                self.status_text = "Define corners and ensure camera is running."
+                return
+
+            candidates = [
+                (contrast, saturation, brightness)
+                for contrast in range(50, 251, 25)
+                for saturation in range(50, 251, 25)
+                for brightness in range(-60, 61, 20)
+            ]
+            best = None
+            for index, (contrast, saturation, brightness) in enumerate(candidates, start=1):
+                adjusted = self._adjust_image_with_params(frame, contrast, saturation, brightness)
+                samples, labels = self._reference_slot_samples(adjusted)
+                score = self._colour_calibration_score(samples, labels)
+                if score is not None:
+                    result = (score[0], score[1], contrast, saturation, brightness, samples, labels)
+                    if best is None or result[:2] > best[:2]:
+                        best = result
+                self.color_autocalibrate_progress = index / len(candidates)
+
+            if best is None:
+                self.status_text = "Auto colour calibration failed: no valid reference slots."
+                return
+            correct, margin, self.contrast, self.saturation, self.brightness, samples, labels = best
+            self.player1_color = np.mean(samples[labels == 0], axis=0).astype(int).tolist()
+            self.player2_color = np.mean(samples[labels == 1], axis=0).astype(int).tolist()
+            self.calibration_complete = True
+            self.color_autocalibrate_result = {
+                "correct": correct, "total": len(samples), "margin": round(margin, 2),
+                "contrast": self.contrast, "saturation": self.saturation, "brightness": self.brightness,
+            }
+            self.status_text = f"Auto colour calibrated: {correct}/{len(samples)} reference slots classified correctly."
+        except Exception as exc:
+            self.status_text = f"Auto colour calibration failed: {exc}"
+        finally:
+            self.color_autocalibrate_progress = 1.0
+            self.is_color_autocalibrating = False
 
     def _autocalibrate_thread(self, step=1, mode='step', params=None):
         if mode == 'single':
@@ -712,6 +783,9 @@ def get_status():
         "player1_color": calibrator.player1_color,
         "player2_color": calibrator.player2_color,
         "is_autocalibrating": calibrator.is_autocalibrating,
+        "is_color_autocalibrating": calibrator.is_color_autocalibrating,
+        "color_autocalibrate_progress": calibrator.color_autocalibrate_progress,
+        "color_autocalibrate_result": calibrator.color_autocalibrate_result,
         "autocalibrate_state": calibrator.autocalibrate_state,
         "autocalibrate_progress": calibrator.autocalibrate_progress,
         "autocalibrate_results": calibrator.autocalibrate_results,
@@ -860,6 +934,19 @@ def save_realsense():
 def calibrate_colors():
     calibrator.calibrate_colors()
     return jsonify({'status': calibrator.status_text})
+
+@app.route('/api/autocalibrate_colors', methods=['POST'])
+def autocalibrate_colors():
+    if calibrator.is_color_autocalibrating:
+        return jsonify({'status': 'already running'}), 409
+    if len(calibrator.corners) != 4:
+        return jsonify({'status': 'Define all four board corners first.'}), 400
+    calibrator.is_color_autocalibrating = True
+    calibrator.color_autocalibrate_progress = 0.0
+    calibrator.color_autocalibrate_result = None
+    calibrator.status_text = "Auto colour calibration: testing image settings..."
+    threading.Thread(target=calibrator._autocalibrate_colours_thread, daemon=True).start()
+    return jsonify({'status': 'started'})
 
 @app.route('/api/reset', methods=['POST'])
 def reset():

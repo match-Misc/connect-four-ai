@@ -41,6 +41,8 @@ To ensure all hardware components are properly powered and connected, follow the
    
    <img src="./images/network-switch-connection.jpg" alt="Switch inside the back left door of the MiR" width="300" />
 
+6. **Connect the difficulty button:** Connect the difficulty button by plugging the cable into the UR controller. *(Note: Check the plug and the controller ports to find the correct one, as the plug is specific and will only fit into exactly one port.)*
+
 [⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Getting the NUC ready](#getting-the-nuc-ready)
 
 ## Getting the NUC ready
@@ -62,37 +64,44 @@ Before proceeding, ensure that the [Cabling](#cabling) is completed and all devi
 
 Each time the game is set up in a new location, the camera alignment and coin color detection must be calibrated to account for different lighting conditions.
 
-1. **Start the Calibration Server:**
-   - Open a terminal and run `pixi run calibrate`.
-   - Open your web browser and navigate to: [http://127.0.0.1:5000/](http://127.0.0.1:5000/)
+>⚠️ **ATTENTION: Make sure NOTHING is in between the camera and the game.** If necessary, check the camera image.
 
-2. **Step 1: Define Game Board:**
+> **Important:**
+> Calibration is iterative. Sometimes you may need to go back to a previous step (e.g., tweaking the RealSense depth settings or board geometry) to get the best results in the final Detection phase. Also, note that the color calibration might need to be tweaked over the play time, as changes in the surrounding light can have a major effect on color detection.
+
+**Start the Calibration Server:**
+- Open a terminal and run `pixi run calibrate`.
+- Open your web browser and navigate to: [http://127.0.0.1:5000/](http://127.0.0.1:5000/)
+
+1. **Step 1: Define Game Board:**
    - Check if the camera image aligns with the physical game board.
    - If no markers are visible, click in the middle of the four corner holes to define the grid.
    - If markers exist but are misaligned, click near the corners to adjust their position so all 42 holes are correctly aligned.
+   - **Note:** Make sure the circles are not too big. Otherwise, the edge of the holes is detected and will lead to errors!
    - Click **Save Corners** when finished.
 
-3. **Step 2: RealSense Calibration:**
+2. **Step 2: RealSense Calibration:**
    - Switch to the RealSense Calibration tab.
    - Under **Manual Overrides**, ensure the Visual Preset is set to `3` (High Accuracy).
    - Check the depth feed to ensure all empty holes are identified cleanly.
-   - If the depth readings are noisy or unsteady, use the **Auto Calibration** tool. (Note: configuring a wider sweep range will take longer). Once complete, it will apply the best hardware settings.
+   - If the depth readings are noisy or unsteady, use the **Quick Calibration** tool. (Note: configuring a wider sweep range will take longer). Once complete, it will apply the best hardware settings.
    - Click **Save Profile**.
 
-4. **Step 3: Color Calibration:**
+3. **Step 3: Color Calibration:**
    - Switch to the Color Calibration tab.
    - Place Player 1 and Player 2 stones in the highlighted columns as instructed on the screen.
    - Click **Calibrate Colors** to automatically detect the color profiles.
    - Click **Save Colors**.
 
-5. **Step 4: Detection Calibration:**
+4. **Step 4: Detection Calibration:**
    - Switch to the Detection Calibration tab.
    - Test by dropping a few stones into different locations and verifying the system detects them reliably.
    - If open slots are incorrectly marked as closed (or vice versa), adjust the **Occupancy Threshold** and **Temporal Smoothing** until detection is perfectly stable.
    - Click **Save Detection Config**.
 
-> **Important:**
-> Calibration is iterative. Sometimes you may need to go back to a previous step (e.g., tweaking the RealSense depth settings or board geometry) to get the best results in the final Detection phase.
+
+**Finish Calibration:**
+Once calibration is complete, you can stop the calibration process in the terminal (e.g., by pressing `Ctrl+C`). You can either close the terminal window or leave it open to run the game command later.
 
 [⬆️ Back to Step-by-Step Guide](../README.md#step-by-step-setup-guide) | [➡️ Next Step: Getting the UR-robots ready](#getting-the-ur-robots-ready)
 
@@ -106,6 +115,17 @@ Only one of the MuR620's robot arms is needed for the game; the other arm must b
 
 - **UR10 2** is not needed and must be parked safely to the side.
 - **UR10 1** is responsible for playing the game and will be equipped with the appropriate gripper and jaws.
+
+⚠️ **ATTENTION: SD Card Swap**
+The SD card in the UR10 1 controller needs to be switched with the one found in the grey box. **This must be done BEFORE powering on the UR controller!** (If it is already on, you must turn it off first). Please put the original SD card on top of the controller for safekeeping, and make sure to insert it back once the game setup is no longer needed!
+
+**Accessing the UR Control Interface**
+To view and interact with the UR control interface, you need to plug in one of the touch displays (which can be found somewhere in SCALE). 
+1. Connect it via HDMI and USB to the back panel of the MuR620.
+2. Once plugged in, the display will show a four-way split screen of multiple devices inside the MuR620. Two of these screens belong to the two UR robots.
+3. To actively control a robot and use the touch panel, you must reach inside the back left door of the MuR620 and press the button on the mounted KVM switch. Each press switches the control to the next port.
+   > **Tip:** Pay attention to which of the four connections belongs to your UR when you initially turn it on (you will see its loading screen), so you know which port to switch to.
+
 
 Detailed instructions are provided in the following steps:
 

@@ -374,7 +374,7 @@ export default function App() {
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">
                 <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">Color Calibration</h2>
-                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Place Player 1 chips on the RED highlighted columns and Player 2 chips on the YELLOW highlighted columns, then press Calibrate Colors.</p>
+                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Fill the black reference columns for Player 1 and green reference columns for Player 2. Auto calibration tests image settings against every highlighted slot.</p>
               </header>
 
               <Card className="bg-white border-slate-200 shadow-md overflow-hidden p-2">
@@ -384,6 +384,10 @@ export default function App() {
               </Card>
 
               <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <Button onClick={() => action('autocalibrate_colors')} disabled={status.corners?.length < 4 || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md shadow-[#b1ca21]/20 h-12 transition-all">
+                  <RefreshCw className={`w-4 h-4 mr-2 ${status.is_color_autocalibrating ? 'animate-spin' : ''}`} />
+                  {status.is_color_autocalibrating ? 'Auto Calibrating…' : 'Auto Calibrate Colours'}
+                </Button>
                 <Button onClick={() => action('calibrate_colors')} disabled={status.corners?.length < 4} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md shadow-[#b1ca21]/20 h-12 transition-all">
                   <CheckCircle2 className="w-4 h-4 mr-2" /> Calibrate Colors
                 </Button>
@@ -391,6 +395,19 @@ export default function App() {
                   <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save Colors
                 </Button>
               </div>
+
+              {status.is_color_autocalibrating && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                  <div className="flex justify-between text-sm font-medium text-slate-600"><span>Testing contrast, saturation and brightness</span><span>{Math.round((status.color_autocalibrate_progress || 0) * 100)}%</span></div>
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21] transition-all duration-300" style={{ width: `${(status.color_autocalibrate_progress || 0) * 100}%` }} /></div>
+                </div>
+              )}
+
+              {status.color_autocalibrate_result && !status.is_color_autocalibrating && (
+                <p className="text-sm text-slate-600 bg-[#b1ca21]/10 border border-[#b1ca21]/20 rounded-xl px-4 py-3">
+                  Auto result: {status.color_autocalibrate_result.correct}/{status.color_autocalibrate_result.total} slots correct — contrast {status.color_autocalibrate_result.contrast}, saturation {status.color_autocalibrate_result.saturation}, brightness {status.color_autocalibrate_result.brightness}.
+                </p>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card className="bg-white border-slate-200 shadow-sm md:col-span-2">
@@ -400,7 +417,7 @@ export default function App() {
                   </CardHeader>
                   <CardContent className="flex flex-col md:flex-row gap-6">
                     <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="font-medium text-slate-700">Player 1</span>
+                      <span className="font-medium text-slate-700">Player 1 (Black)</span>
                       {status.player1_color ? (
                         <div className="flex items-center gap-3">
                           <span className="text-xs font-mono text-slate-500">BGR: [{status.player1_color.join(', ')}]</span>
@@ -411,7 +428,7 @@ export default function App() {
                       )}
                     </div>
                     <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="font-medium text-slate-700">Player 2</span>
+                      <span className="font-medium text-slate-700">Player 2 (Green)</span>
                       {status.player2_color ? (
                         <div className="flex items-center gap-3">
                           <span className="text-xs font-mono text-slate-500">BGR: [{status.player2_color.join(', ')}]</span>

@@ -38,10 +38,24 @@ Before starting the setup, the following items should be prepared:
 
 ### 5. Launch
 
-- [Start the Game](./docs/hardware-setup.md#start-the-game)
 - [Start UR program and move to initial pose](./docs/hardware-setup.md#start-ur-program-and-move-to-initial-pose)
+- [Start the Game](./docs/hardware-setup.md#start-the-game)
 
----
+
+## Instructor Manual (Betreuer-Handbuch)
+
+As an instructor, your responsibilities during the game are:
+
+- Tell the person who wants to play how to set the difficulty by pressing the button.
+- Instruct players on using the NFC reader: By placing their NFC chip on the reader, they can set the difficulty and then start the game to get ranked on the leaderboard.
+- Explain how to put in the chips.
+- **Instruct the player to wait for a second after the robot places its chip** before making their next move.
+- **Remind the player to watch out for robot movements.** Even though it is a collaborative robot (cobot) and generally safe, we don't want to take any unnecessary risks.
+- When the game is won or lost, pull out the aluminum bar at the bottom of the game to eject all stones. This will automatically reset the game.
+- Sort the **green** chips into the chip tower for the player.
+- Sort the **black** chips into the chip tray of the robot.
+- ⚠️ **Safety First:** Only after everything has been reset is the next person allowed to start. Otherwise, the robot might move and pose a safety risk for the person sorting the chips.
+- If you want to reset the game early (before the game is finished), just pull out the aluminum bar at the bottom to eject all stones. This will automatically reset the game so the human can start again.
 
 ## Additional Information and Bug Fixing
 
