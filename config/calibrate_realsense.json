@@ -1,10 +1,13 @@
 {
-    "exposure": 1000,
-    "gain": 16,
-    "laser_power": 150,
+    "exposure": 7000,
+    "gain": 40,
+    "laser_power": 225,
     "visual_preset": 3,
     "min_depth_mm": 405,
     "max_depth_mm": 480,
     "emitter_enabled": 1,
-    "auto_exposure": 0
+    "auto_exposure": 0,
+    "color_exposure": 5000,
+    "color_gain": 16,
+    "color_auto_exposure": 0
 }

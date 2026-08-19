@@ -7,9 +7,9 @@ import { Label } from './components/ui/label'
 import { Input } from './components/ui/input'
 import { Settings, Monitor, RefreshCw, Save, CheckCircle2, LayoutGrid, Palette, Target, Nfc } from 'lucide-react'
 
-function SliderWithInput({ label, description, value, min = 0, max = 100, step = 1, onChange }: { label: string, description?: React.ReactNode, value: number, min?: number, max?: number, step?: number, onChange: (v: number) => void }) {
+function SliderWithInput({ label, description, value, min = 0, max = 100, step = 1, onChange, disabled = false }: { label: string, description?: React.ReactNode, value: number, min?: number, max?: number, step?: number, onChange: (v: number) => void, disabled?: boolean }) {
   return (
-    <div className="space-y-4 p-5 bg-white rounded-xl border border-slate-200 hover:border-[#b1ca21]/50 hover:bg-slate-50 transition-all duration-300 shadow-sm">
+    <div className={`space-y-4 p-5 bg-white rounded-xl border border-slate-200 transition-all duration-300 shadow-sm ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[#b1ca21]/50 hover:bg-slate-50'}`}>
       <div className="space-y-1">
         <Label className="text-slate-700 font-medium tracking-wide text-sm flex items-center gap-2">
           {label}
@@ -22,14 +22,16 @@ function SliderWithInput({ label, description, value, min = 0, max = 100, step =
           min={min} 
           max={max} 
           step={step} 
-          onValueChange={(v) => onChange(v[0])} 
-          className="flex-1 cursor-pointer [&_[role=slider]]:bg-[#b1ca21] [&_[role=slider]]:border-[#b1ca21] [&_[data-orientation=horizontal]>span:first-child]:bg-slate-200 [&_[data-orientation=horizontal]>span:first-child>span]:bg-[#b1ca21]"
+          onValueChange={(v) => onChange(v[0])}
+          disabled={disabled}
+          className="flex-1 cursor-pointer disabled:cursor-not-allowed [&_[role=slider]]:bg-[#b1ca21] [&_[role=slider]]:border-[#b1ca21] [&_[data-orientation=horizontal]>span:first-child]:bg-slate-200 [&_[data-orientation=horizontal]>span:first-child>span]:bg-[#b1ca21]"
         />
         <Input 
           type="number" 
           value={value} 
           min={min}
           max={max}
+          disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           className="w-24 bg-white border-slate-200 focus-visible:ring-[#b1ca21] text-center font-mono text-slate-800"
         />
@@ -67,7 +69,7 @@ export default function App() {
   }, [activeTab])
   const [sessionTime] = useState(() => Date.now())
     
-  const [realsenseSubTab, setRealsenseSubTab] = useState<'sensor' | 'filtering'>('sensor')
+  const [realsenseSubTab, setRealsenseSubTab] = useState<'automatic' | 'manual' | 'filtering'>('automatic')
   const [measuredDepth, setMeasuredDepth] = useState<number | null>(null)
   const [advancedSettings, setAdvancedSettings] = useState({
     exp_min: 1000, exp_max: 8000, exp_step: 1500,
@@ -76,6 +78,11 @@ export default function App() {
     duration: 3.0
   })
   const [pendingOverrides, setPendingOverrides] = useState<any>({})
+  const [pendingColorCamera, setPendingColorCamera] = useState<any>({})
+  const [pendingColorImage, setPendingColorImage] = useState<any>({})
+  const [colorCalibrationTab, setColorCalibrationTab] = useState<'automatic' | 'manual'>('automatic')
+  const [colorPrecision, setColorPrecision] = useState<'fast' | 'standard' | 'thorough'>('standard')
+  const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null)
 
   const fetchStatus = async () => {
     try {
@@ -150,6 +157,18 @@ export default function App() {
     fetchStatus()
   }
 
+  const applyManualColorSettings = async () => {
+    if (Object.keys(pendingColorCamera).length > 0) {
+      await fetch('/api/update_realsense', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pendingColorCamera) })
+      setPendingColorCamera({})
+    }
+    if (Object.keys(pendingColorImage).length > 0) {
+      await fetch('/api/update_detection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pendingColorImage) })
+      setPendingColorImage({})
+    }
+    fetchStatus()
+  }
+
   const action = async (endpoint: string, data?: any) => {
     await fetch(`/api/${endpoint}`, { 
       method: 'POST',
@@ -159,7 +178,25 @@ export default function App() {
     fetchStatus()
   }
 
+  const saveConfiguration = async (endpoint: string, description: string) => {
+    try {
+      const response = await fetch(`/api/${endpoint}`, { method: 'POST' })
+      if (!response.ok) {
+        setSaveFeedback({ type: 'error', message: `${description} konnten nicht gespeichert werden.` })
+      } else {
+        setSaveFeedback({ type: 'success', message: `${description} wurden dauerhaft gespeichert.` })
+      }
+    } catch {
+      setSaveFeedback({ type: 'error', message: `${description} konnten nicht gespeichert werden.` })
+    } finally {
+      fetchStatus()
+      window.setTimeout(() => setSaveFeedback(null), 5000)
+    }
+  }
+
   if (!status) return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-[#b1ca21] animate-pulse text-lg tracking-widest font-light">INITIALIZING...</div>
+
+  const manualControlsLocked = status.autocalibrate_state !== 0 || status.is_color_capturing || status.is_color_autocalibrating
 
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-slate-100 text-slate-900 overflow-hidden font-sans selection:bg-[#b1ca21]/30">
@@ -268,6 +305,11 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-y-auto bg-slate-50/50 relative">
+        {saveFeedback && (
+          <div role="status" className={`fixed right-4 bottom-4 z-50 max-w-md rounded-xl border px-4 py-3 shadow-lg text-sm font-medium ${saveFeedback.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+            {saveFeedback.type === 'success' ? '✓ ' : '✕ '}{saveFeedback.message}
+          </div>
+        )}
         <div className="p-4 lg:p-10 max-w-5xl mx-auto w-full relative z-10 pb-20">
           
           <div className={activeTab === 'nfc-testing' ? 'block' : 'hidden'}>
@@ -351,10 +393,10 @@ export default function App() {
               </Card>
 
               <div className="flex flex-col sm:flex-row gap-4 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                <Button variant="outline" onClick={() => action('reset')} className="flex-1 bg-white border-slate-200 hover:bg-slate-50 text-slate-700 h-12">
+                <Button variant="outline" disabled={manualControlsLocked} onClick={() => action('reset')} className="flex-1 bg-white border-slate-200 hover:bg-slate-50 text-slate-700 h-12">
                   <RefreshCw className="w-4 h-4 mr-2" /> Reset Corners
                 </Button>
-                <Button onClick={() => action('save_detection')} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white shadow-md h-12">
+                <Button onClick={() => saveConfiguration('save_detection', 'Die Erkennungseinstellungen')} disabled={manualControlsLocked} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white shadow-md h-12">
                   <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save Corners
                 </Button>
               </div>
@@ -364,7 +406,7 @@ export default function App() {
                   <CardTitle className="text-lg text-slate-800">Board Geometry</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <SliderWithInput label="Hole Diameter (px)" description="The visual size of the holes mapped on the game board." value={status.hole_diameter} max={150} onChange={(v) => updateDetection('hole_diameter', v)} />
+                  <SliderWithInput label="Hole Diameter (px)" description="The visual size of the holes mapped on the game board." value={status.hole_diameter} max={150} disabled={manualControlsLocked} onChange={(v) => updateDetection('hole_diameter', v)} />
                 </CardContent>
               </Card>
             </div>
@@ -373,8 +415,8 @@ export default function App() {
           <div className={activeTab === 'color-calibration' ? 'block' : 'hidden'}>
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">
-                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">Color Calibration</h2>
-                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Fill the black reference columns for Player 1 and green reference columns for Player 2. Auto calibration tests image settings against every highlighted slot.</p>
+                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">Colour Calibration</h2>
+                <p className="text-slate-500 mt-2 text-sm max-w-3xl">The guided flow samples legal board positions at low, medium and full occupancy. Put Player 1 (black) in columns 1, 3, 5 and 7; put Player 2 (green) in columns 2, 4 and 6. The live feed marks only the slots needed for the current step.</p>
               </header>
 
               <Card className="bg-white border-slate-200 shadow-md overflow-hidden p-2">
@@ -384,74 +426,62 @@ export default function App() {
               </Card>
 
               <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                <Button onClick={() => action('autocalibrate_colors')} disabled={status.corners?.length < 4 || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md shadow-[#b1ca21]/20 h-12 transition-all">
-                  <RefreshCw className={`w-4 h-4 mr-2 ${status.is_color_autocalibrating ? 'animate-spin' : ''}`} />
-                  {status.is_color_autocalibrating ? 'Auto Calibrating…' : 'Auto Calibrate Colours'}
+                <Button onClick={() => saveConfiguration('save_realsense', 'Die RealSense-Einstellungen')} disabled={manualControlsLocked} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white h-12">
+                  <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save RGB settings to config
                 </Button>
-                <Button onClick={() => action('calibrate_colors')} disabled={status.corners?.length < 4} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md shadow-[#b1ca21]/20 h-12 transition-all">
-                  <CheckCircle2 className="w-4 h-4 mr-2" /> Calibrate Colors
-                </Button>
-                <Button onClick={() => action('save_detection')} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white shadow-md h-12">
-                  <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save Colors
+                <Button onClick={() => saveConfiguration('save_detection', 'Die Erkennungseinstellungen')} disabled={manualControlsLocked} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white h-12">
+                  <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save calibrated colours
                 </Button>
               </div>
 
-              {status.is_color_autocalibrating && (
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
-                  <div className="flex justify-between text-sm font-medium text-slate-600"><span>Testing contrast, saturation and brightness</span><span>{Math.round((status.color_autocalibrate_progress || 0) * 100)}%</span></div>
-                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21] transition-all duration-300" style={{ width: `${(status.color_autocalibrate_progress || 0) * 100}%` }} /></div>
+              <Card className="bg-white border-slate-200 shadow-sm">
+                <CardHeader className="pb-4 border-b border-slate-100 mb-4">
+                  <CardTitle className="text-lg text-slate-800">Currently calibrated colours</CardTitle>
+                  <CardDescription className="text-slate-500">These are the colour references currently used by detection.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col md:flex-row gap-6">
+                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Player 1 (Black)</span>{status.player1_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player1_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player1_color[2]}, ${status.player1_color[1]}, ${status.player1_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
+                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Player 2 (Green)</span>{status.player2_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player2_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player2_color[2]}, ${status.player2_color[1]}, ${status.player2_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
+                </CardContent>
+              </Card>
+
+              <div className="pt-2">
+                <div className="inline-flex bg-slate-100 p-1.5 rounded-t-2xl rounded-br-none border border-slate-200 border-b-0 shadow-sm relative z-10">
+                  <button onClick={() => setColorCalibrationTab('automatic')} className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${colorCalibrationTab === 'automatic' ? 'text-[#8a9e19] bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Automatic calibration</button>
+                  <button onClick={() => setColorCalibrationTab('manual')} className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${colorCalibrationTab === 'manual' ? 'text-[#8a9e19] bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Manual calibration</button>
                 </div>
-              )}
+                <div>
 
-              {status.color_autocalibrate_result && !status.is_color_autocalibrating && (
-                <p className="text-sm text-slate-600 bg-[#b1ca21]/10 border border-[#b1ca21]/20 rounded-xl px-4 py-3">
-                  Auto result: {status.color_autocalibrate_result.correct}/{status.color_autocalibrate_result.total} slots correct — contrast {status.color_autocalibrate_result.contrast}, saturation {status.color_autocalibrate_result.saturation}, brightness {status.color_autocalibrate_result.brightness}.
-                </p>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card className="bg-white border-slate-200 shadow-sm md:col-span-2">
-                  <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                    <CardTitle className="text-lg text-slate-800">Calibrated Colors</CardTitle>
-                    <CardDescription className="text-slate-500">Colors detected for Player 1 and Player 2 tokens.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-col md:flex-row gap-6">
-                    <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="font-medium text-slate-700">Player 1 (Black)</span>
-                      {status.player1_color ? (
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-mono text-slate-500">BGR: [{status.player1_color.join(', ')}]</span>
-                          <div className="w-8 h-8 rounded-full border-2 border-slate-300 shadow-inner" style={{ backgroundColor: `rgb(${status.player1_color[2]}, ${status.player1_color[1]}, ${status.player1_color[0]})` }} />
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">Not calibrated</span>
-                      )}
-                    </div>
-                    <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="font-medium text-slate-700">Player 2 (Green)</span>
-                      {status.player2_color ? (
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-mono text-slate-500">BGR: [{status.player2_color.join(', ')}]</span>
-                          <div className="w-8 h-8 rounded-full border-2 border-slate-300 shadow-inner" style={{ backgroundColor: `rgb(${status.player2_color[2]}, ${status.player2_color[1]}, ${status.player2_color[0]})` }} />
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">Not calibrated</span>
-                      )}
-                    </div>
+              {colorCalibrationTab === 'automatic' && <div className="space-y-6">
+                <Card className="bg-white border-slate-200 shadow-sm rounded-tl-none">
+                  <CardHeader className="pb-4 border-b border-slate-100 mb-4"><CardTitle className="text-lg text-slate-800">Automatic calibration precision</CardTitle><CardDescription className="text-slate-500">Automatic calibration tests fixed RGB exposure/gain settings, then locks the selected RGB setting. RGB auto-exposure is never left enabled.</CardDescription></CardHeader>
+                  <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {[
+                      ['fast', 'Fast', '2 layouts; 6 RGB settings. About 5 seconds per automatic capture.'],
+                      ['standard', 'Standard', '3 layouts; 10 RGB settings. About 8 seconds per automatic capture.'],
+                      ['thorough', 'Thorough', '3 layouts; 21 RGB settings. About 20 seconds per automatic capture.'],
+                    ].map(([value, title, description]) => <button key={value} type="button" disabled={manualControlsLocked || status.is_color_capturing || status.is_color_autocalibrating} onClick={() => setColorPrecision(value as 'fast' | 'standard' | 'thorough')} className={`text-left rounded-xl border p-4 transition-all ${colorPrecision === value ? 'border-[#b1ca21] bg-[#b1ca21]/10 ring-1 ring-[#b1ca21]/30' : 'border-slate-200 hover:border-slate-300'} disabled:opacity-50`}><div className="font-semibold text-slate-800">{title}</div><p className="mt-1 text-xs leading-relaxed text-slate-500">{description}</p></button>)}
                   </CardContent>
                 </Card>
+                <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                  <Button onClick={() => action('color_calibration/start', { precision: colorPrecision })} disabled={manualControlsLocked || status.corners?.length < 4 || status.is_color_capturing || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white h-12"><RefreshCw className="w-4 h-4 mr-2" /> Start guided calibration</Button>
+                  <Button onClick={() => action('color_calibration/capture')} disabled={manualControlsLocked || status.color_calibration_stage_rows === null || status.color_calibration_stage_rows === undefined || status.is_color_capturing || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white h-12"><CheckCircle2 className={`w-4 h-4 mr-2 ${status.is_color_capturing ? 'animate-pulse' : ''}`} />{status.is_color_capturing ? 'Capturing…' : 'Capture this layout'}</Button>
+                </div>
+                {status.color_calibration_stage_rows !== null && status.color_calibration_stage_rows !== undefined && !status.is_color_autocalibrating && <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">Step {(status.color_calibration_stage_index || 0) + 1} of {status.color_calibration_stage_count}: fill the bottom {status.color_calibration_stage_rows} row{status.color_calibration_stage_rows === 1 ? '' : 's'}, then capture this layout.</p>}
+                {status.is_color_capturing && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2"><div className="flex justify-between text-sm font-medium text-slate-600"><span>Capturing RGB exposure/gain sweep{status.color_calibration_active_rgb_setting ? ` — exposure ${status.color_calibration_active_rgb_setting.exposure}, gain ${status.color_calibration_active_rgb_setting.gain}` : ''}</span><span>{Math.round((status.color_calibration_capture_progress || 0) * 100)}% · ~{Math.ceil(status.color_calibration_eta_seconds || 0)} s remaining</span></div><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21]" style={{ width: `${(status.color_calibration_capture_progress || 0) * 100}%` }} /></div></div>}
+                {status.is_color_autocalibrating && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2"><div className="flex justify-between text-sm font-medium text-slate-600"><span>Jointly selecting RGB exposure, gain and image filtering</span><span>{Math.round((status.color_autocalibrate_progress || 0) * 100)}% · ~{Math.ceil(status.color_calibration_eta_seconds || 0)} s remaining</span></div><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21]" style={{ width: `${(status.color_autocalibrate_progress || 0) * 100}%` }} /></div></div>}
+                {status.color_autocalibrate_result && !status.is_color_autocalibrating && <p className="text-sm text-slate-600 bg-[#b1ca21]/10 border border-[#b1ca21]/20 rounded-xl px-4 py-3">Auto result: {status.color_autocalibrate_result.accuracy}% stage-balanced accuracy — RGB exposure {status.color_autocalibrate_result.rgb_exposure}, RGB gain {status.color_autocalibrate_result.rgb_gain}, contrast {status.color_autocalibrate_result.contrast}, saturation {status.color_autocalibrate_result.saturation}, brightness {status.color_autocalibrate_result.brightness}. Choose another ranked result below before saving if you prefer.</p>}
+                {status.color_autocalibrate_results?.length > 0 && !status.is_color_autocalibrating && <Card className="bg-white border-slate-200 shadow-sm overflow-hidden"><CardHeader className="pb-4 border-b border-slate-100"><CardTitle className="text-lg text-slate-800">Automatic calibration results</CardTitle><CardDescription className="text-slate-500">Try an alternative before using the save buttons above. The selected result is applied temporarily; saving remains explicit.</CardDescription></CardHeader><CardContent className="p-0 overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Accuracy</th><th className="px-3 py-3">Exposure</th><th className="px-3 py-3">Gain</th><th className="px-3 py-3">Contrast</th><th className="px-3 py-3">Saturation</th><th className="px-3 py-3">Brightness</th><th className="px-3 py-3 text-right">Aktion</th></tr></thead><tbody className="divide-y divide-slate-100">{status.color_autocalibrate_results.map((result: any, index: number) => <tr key={index} className="hover:bg-slate-50"><td className="px-3 py-3 font-medium text-slate-700">{index + 1}</td><td className="px-3 py-3">{result.accuracy}%<span className="text-slate-400"> · margin {result.margin}</span></td><td className="px-3 py-3">{result.rgb_exposure} µs</td><td className="px-3 py-3">{result.rgb_gain}</td><td className="px-3 py-3">{result.contrast}</td><td className="px-3 py-3">{result.saturation}</td><td className="px-3 py-3">{result.brightness}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" onClick={() => action('color_calibration/use_result', { index })} className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10">Use</Button></td></tr>)}</tbody></table></CardContent></Card>}
+              </div>}
 
-                <Card className="bg-white border-slate-200 shadow-sm md:col-span-2">
-                  <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                    <CardTitle className="text-lg text-slate-800">Image Filtering</CardTitle>
-                    <CardDescription className="text-slate-500">Enhance token colors before detection.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <SliderWithInput label="Contrast" description="Adjust contrast to make token colors stand out." value={status.contrast} max={300} onChange={(v) => updateDetection('contrast', v)} />
-                    <SliderWithInput label="Saturation" description="Increase color saturation to improve detection." value={status.saturation} max={300} onChange={(v) => updateDetection('saturation', v)} />
-                    <SliderWithInput label="Brightness" description="Adjust brightness to compensate for room lighting." value={status.brightness} min={-100} max={100} onChange={(v) => updateDetection('brightness', v)} />
-                  </CardContent>
-                </Card>
+              {colorCalibrationTab === 'manual' && <div className="space-y-6">
+                <Card className="bg-white border-slate-200 shadow-sm rounded-tl-none"><CardHeader className="pb-4 border-b border-slate-100 mb-4"><CardTitle className="text-lg text-slate-800">Manual RGB and image settings</CardTitle><CardDescription className={status.color_sensor_available && status.color_exposure_supported ? "text-slate-500" : "text-amber-600"}>{status.color_sensor_available && status.color_exposure_supported ? 'Slider Wechsel are pending. They are not applied until you press Apply Manual Settings.' : 'RGB manual-exposure support was not detected; connect a RealSense colour sensor before colour calibration.'}</CardDescription></CardHeader>
+                  <CardContent className="space-y-4"><div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-start justify-between gap-4"><div><Label className="text-slate-700 font-medium text-sm">Lock RGB exposure for colour detection</Label><p className="text-xs text-slate-500 mt-1">Disable RGB auto-exposure before using a manual colour reference.</p></div><input type="checkbox" disabled={manualControlsLocked} checked={(pendingColorCamera.color_auto_exposure !== undefined ? pendingColorCamera.color_auto_exposure : status.color_auto_exposure) === 0} onChange={(e) => setPendingColorCamera({...pendingColorCamera, color_auto_exposure: e.target.checked ? 0 : 1})} className="w-5 h-5 rounded accent-[#b1ca21]" /></div>
+                  {(pendingColorCamera.color_auto_exposure !== undefined ? pendingColorCamera.color_auto_exposure : status.color_auto_exposure) === 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><SliderWithInput label="RGB Exposure (µs)" description="Belichtungszeit in Mikrosekunden: 1.000 = 1 ms, 5.000 = 5 ms. Höher macht das Bild heller, kann aber helle Bereiche ausbrennen lassen." value={pendingColorCamera.color_exposure !== undefined ? pendingColorCamera.color_exposure : status.color_exposure} min={41} max={10000} step={50} disabled={manualControlsLocked} onChange={(v) => setPendingColorCamera({...pendingColorCamera, color_exposure: v})} /><SliderWithInput label="RGB Gain (Kamerawert)" description="Einheitenloser Sensor-Verstärkungswert. 16 ist der niedrigste Wert; höhere Werte hellen auf, erhöhen aber Bildrauschen und können die Farben verfälschen." value={pendingColorCamera.color_gain !== undefined ? pendingColorCamera.color_gain : status.color_gain} min={16} max={248} disabled={manualControlsLocked} onChange={(v) => setPendingColorCamera({...pendingColorCamera, color_gain: v})} /></div>}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><SliderWithInput label="Contrast" description="Pending image-processing contrast." value={pendingColorImage.contrast !== undefined ? pendingColorImage.contrast : status.contrast} max={300} disabled={manualControlsLocked} onChange={(v) => setPendingColorImage({...pendingColorImage, contrast: v})} /><SliderWithInput label="Saturation" description="Pending image-processing saturation." value={pendingColorImage.saturation !== undefined ? pendingColorImage.saturation : status.saturation} max={300} disabled={manualControlsLocked} onChange={(v) => setPendingColorImage({...pendingColorImage, saturation: v})} /><SliderWithInput label="Brightness" description="Pending image-processing brightness." value={pendingColorImage.brightness !== undefined ? pendingColorImage.brightness : status.brightness} min={-100} max={100} disabled={manualControlsLocked} onChange={(v) => setPendingColorImage({...pendingColorImage, brightness: v})} /></div>
+                  <div className="flex flex-col sm:flex-row justify-end gap-4"><Button disabled={manualControlsLocked || (Object.keys(pendingColorCamera).length === 0 && Object.keys(pendingColorImage).length === 0)} onClick={applyManualColorSettings} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white">Apply Manual Settings</Button><Button onClick={() => action('calibrate_colors')} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10">Calibrate full board</Button></div></CardContent></Card>
+              </div>}
+                </div>
               </div>
             </div>
           </div>
@@ -470,7 +500,7 @@ export default function App() {
               </Card>
 
               <div className="flex justify-end p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                <Button size="lg" onClick={() => action('save_detection')} className="w-full md:w-auto bg-slate-800 hover:bg-slate-700 text-white shadow-md px-8">
+                <Button size="lg" onClick={() => saveConfiguration('save_detection', 'Die Erkennungseinstellungen')} disabled={manualControlsLocked} className="w-full md:w-auto bg-slate-800 hover:bg-slate-700 text-white shadow-md px-8">
                   <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save Detection Config
                 </Button>
               </div>
@@ -488,7 +518,7 @@ export default function App() {
                       min={0} 
                       max={1} 
                       step={0.05} 
-                      onChange={(v) => updateDetection('occupancy_threshold', v)} 
+                      disabled={manualControlsLocked} onChange={(v) => updateDetection('occupancy_threshold', v)}
                     />
                   </div>
                   <div>
@@ -499,7 +529,7 @@ export default function App() {
                       min={1} 
                       max={30} 
                       step={1} 
-                      onChange={(v) => updateDetection('temporal_smoothing', v)} 
+                      disabled={manualControlsLocked} onChange={(v) => updateDetection('temporal_smoothing', v)}
                     />
                   </div>
                 </CardContent>
@@ -510,8 +540,8 @@ export default function App() {
           <div className={activeTab === 'realsense' ? 'block' : 'hidden'}>
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">
-                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">RealSense Calibration</h2>
-                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Configure the physical camera hardware. These settings are applied directly to the RealSense sensor.</p>
+                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">RealSense-Kalibrierung</h2>
+                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Konfiguriere die Tiefen-Kamera. Diese Einstellungen werden direkt auf den RealSense-Sensor angewendet.</p>
               </header>
 
               <Card className="bg-white border-slate-200 shadow-md p-2">
@@ -519,53 +549,52 @@ export default function App() {
                   <img 
                     ref={depthRef}
                     src={`/frame/depth?t=${sessionTime}`} 
-                    alt="Depth Feed" 
+                    alt="Tiefenbild"
                     className="w-full h-auto cursor-crosshair"
                     onClick={handleDepthClick}
                   />
                   {measuredDepth !== null && (
                     <div className="absolute top-2 right-2 lg:top-4 lg:right-4 bg-white/90 text-slate-800 text-xs lg:text-sm px-3 py-1.5 lg:px-4 lg:py-2 rounded-xl font-mono shadow-md flex items-center gap-2 z-20 border border-slate-200">
                       <div className="w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-[#b1ca21] animate-pulse" />
-                      Depth: <span className="font-bold text-[#b1ca21]">{measuredDepth} mm</span>
+                      Tiefe: <span className="font-bold text-[#b1ca21]">{measuredDepth} mm</span>
                     </div>
                   )}
                 </div>
               </Card>
 
-              <div className="flex flex-col md:flex-row items-center justify-between my-4 lg:my-6 gap-4">
-                <div className="hidden md:block w-32"></div> {/* Spacer to center the tabs if we want, or just let them distribute */}
-                <div className="inline-flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-sm relative">
-                  <button onClick={() => setRealsenseSubTab('sensor')} className={`relative z-10 px-4 py-2 lg:px-8 lg:py-2.5 text-xs lg:text-sm font-semibold rounded-xl transition-all duration-300 ${realsenseSubTab === 'sensor' ? 'text-[#8a9e19] shadow-sm bg-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
-                    Sensor Control
-                  </button>
-                  <button onClick={() => setRealsenseSubTab('filtering')} className={`relative z-10 px-4 py-2 lg:px-8 lg:py-2.5 text-xs lg:text-sm font-semibold rounded-xl transition-all duration-300 ${realsenseSubTab === 'filtering' ? 'text-[#8a9e19] shadow-sm bg-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
-                    Depth Filtering
-                  </button>
-                </div>
-                <Button onClick={() => action('save_realsense')} disabled={status.autocalibrate_state !== 0} className="w-full md:w-auto bg-slate-800 hover:bg-slate-700 text-white shadow-md">
-                  <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Save Profile
+              <div className="flex justify-start">
+                <Button title="Speichert die aktuellen Tiefen-Kameraeinstellungen dauerhaft in der RealSense-Konfiguration. Sie werden beim nächsten Start wieder geladen." onClick={() => saveConfiguration('save_realsense', 'Die RealSense-Einstellungen')} disabled={status.autocalibrate_state !== 0} className="w-full md:w-auto bg-slate-800 hover:bg-slate-700 text-white shadow-md">
+                  <Save className="w-4 h-4 mr-2 text-[#b1ca21]" /> Tiefen-Kameraeinstellungen dauerhaft speichern
                 </Button>
               </div>
 
-              {realsenseSubTab === 'sensor' && (
+              <div className="pt-2">
+                <div className="inline-flex bg-slate-100 p-1.5 rounded-t-2xl rounded-br-none border border-slate-200 border-b-0 shadow-sm relative z-10">
+                  <button title="Automatische Suche nach stabilen Tiefensensor-Einstellungen." onClick={() => setRealsenseSubTab('automatic')} className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${realsenseSubTab === 'automatic' ? 'text-[#8a9e19] bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Automatisch</button>
+                  <button title="Belichtung, Verstärkung, Laserleistung und Hardware-Voreinstellung selbst setzen." onClick={() => setRealsenseSubTab('manual')} className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${realsenseSubTab === 'manual' ? 'text-[#8a9e19] bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Manuell</button>
+                  <button title="Grenzen für gültige Tiefenwerte und den Infrarot-Emitter einstellen." onClick={() => setRealsenseSubTab('filtering')} className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${realsenseSubTab === 'filtering' ? 'text-[#8a9e19] bg-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Tiefenfilter</button>
+                </div>
+                <div>
+
+              {realsenseSubTab === 'automatic' && (
                 <div className="space-y-6">
-                  <Card className="bg-white border-slate-200 shadow-sm p-4 lg:p-6">
+                  <Card className="bg-white border-slate-200 shadow-sm rounded-tl-none p-4 lg:p-6">
                     <div className="flex flex-col justify-between gap-4">
                       {status.autocalibrate_state === 0 && (
                         <div className="flex flex-col gap-3">
-                          <div className="text-sm font-semibold text-slate-700">Auto Calibration Options</div>
+                          <div className="text-sm font-semibold text-slate-700">Automatische Tiefenkalibrierung</div>
                           <div className="flex flex-wrap items-center gap-4">
-                            <Button size="lg" onClick={() => action('autocalibrate_single', advancedSettings)} disabled={status.corners?.length < 4} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md px-6 transition-all">
-                              <RefreshCw className="w-4 h-4 mr-2" /> Quick Calibrate
+                            <Button title="Prüft die gewählten Tiefensensor-Einstellungen am leeren Feld und wählt die beste schnelle Einstellung aus." size="lg" onClick={() => action('autocalibrate_single', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md px-6 transition-all">
+                              <RefreshCw className="w-4 h-4 mr-2" /> Schnell kalibrieren
                             </Button>
-                            <Button size="lg" onClick={() => action('autocalibrate_step1', advancedSettings)} disabled={status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 px-6 transition-all">
-                              Thorough Calibrate (2-Step)
+                            <Button title="Misst zuerst das leere und danach das vollständig gefüllte Feld. Liefert die verlässlichste Tiefenkalibrierung." size="lg" onClick={() => action('autocalibrate_step1', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 px-6 transition-all">
+                              Gründlich kalibrieren (2 Schritte)
                             </Button>
                           </div>
                           
                           <div className="mt-4 p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-4">
                             <div className="flex items-center justify-between mb-2">
-                              <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Advanced Sweep Parameters</div>
+                              <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Erweiterte Suchparameter</div>
                               {(() => {
                                 const expSteps = Math.max(1, Math.floor((advancedSettings.exp_max - advancedSettings.exp_min) / (advancedSettings.exp_step || 1)) + 1)
                                 const gainSteps = Math.max(1, Math.floor((advancedSettings.gain_max - advancedSettings.gain_min) / (advancedSettings.gain_step || 1)) + 1)
@@ -575,37 +604,37 @@ export default function App() {
                                 const timeStr = estimatedTimeSeconds > 60 ? `${Math.floor(estimatedTimeSeconds / 60)}m ${Math.round(estimatedTimeSeconds % 60)}s` : `${Math.round(estimatedTimeSeconds)}s`
                                 return (
                                   <div className="text-xs font-medium bg-[#b1ca21]/20 text-[#8a9e19] px-2 py-1 rounded-md">
-                                    Est. Time: {timeStr} ({combinations} combos)
+                                    Geschätzte Dauer: {timeStr} ({combinations} Kombinationen)
                                   </div>
                                 )
                               })()}
                             </div>
                             <div className="mb-4">
-                              <SliderWithInput label="Recording Duration per Setting (s)" description="How long to record depth data for each combination of settings to evaluate stability (default: 3s)." value={advancedSettings.duration} min={0.5} max={10} step={0.5} onChange={(v) => setAdvancedSettings({...advancedSettings, duration: v})} />
+                              <SliderWithInput label="Aufnahmedauer je Einstellung (s)" description="So lange werden Tiefendaten je Einstellung aufgezeichnet, um die Stabilität zu bewerten (Standard: 3 s)." value={advancedSettings.duration} min={0.5} max={10} step={0.5} disabled={manualControlsLocked} onChange={(v) => setAdvancedSettings({...advancedSettings, duration: v})} />
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                               <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Exposure Range</Label>
+                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Belichtungsbereich</Label>
                                 <div className="grid grid-cols-3 gap-2">
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Min</Label><Input type="number" value={advancedSettings.exp_min} onChange={e => setAdvancedSettings({...advancedSettings, exp_min: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Max</Label><Input type="number" value={advancedSettings.exp_max} onChange={e => setAdvancedSettings({...advancedSettings, exp_max: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
-                                  <div><Label className="text-[10px] text-slate-400 uppercase">Step</Label><Input type="number" value={advancedSettings.exp_step} onChange={e => setAdvancedSettings({...advancedSettings, exp_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
+                                  <div><Label className="text-[10px] text-slate-400 uppercase">Schritt</Label><Input type="number" value={advancedSettings.exp_step} onChange={e => setAdvancedSettings({...advancedSettings, exp_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                 </div>
                               </div>
                               <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Gain Range</Label>
+                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Gain-Bereich</Label>
                                 <div className="grid grid-cols-3 gap-2">
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Min</Label><Input type="number" value={advancedSettings.gain_min} onChange={e => setAdvancedSettings({...advancedSettings, gain_min: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Max</Label><Input type="number" value={advancedSettings.gain_max} onChange={e => setAdvancedSettings({...advancedSettings, gain_max: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
-                                  <div><Label className="text-[10px] text-slate-400 uppercase">Step</Label><Input type="number" value={advancedSettings.gain_step} onChange={e => setAdvancedSettings({...advancedSettings, gain_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
+                                  <div><Label className="text-[10px] text-slate-400 uppercase">Schritt</Label><Input type="number" value={advancedSettings.gain_step} onChange={e => setAdvancedSettings({...advancedSettings, gain_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                 </div>
                               </div>
                               <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Laser Range</Label>
+                                <Label className="text-sm font-semibold text-slate-700 mb-3 block">Laserleistungsbereich</Label>
                                 <div className="grid grid-cols-3 gap-2">
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Min</Label><Input type="number" value={advancedSettings.laser_min} onChange={e => setAdvancedSettings({...advancedSettings, laser_min: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                   <div><Label className="text-[10px] text-slate-400 uppercase">Max</Label><Input type="number" value={advancedSettings.laser_max} onChange={e => setAdvancedSettings({...advancedSettings, laser_max: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
-                                  <div><Label className="text-[10px] text-slate-400 uppercase">Step</Label><Input type="number" value={advancedSettings.laser_step} onChange={e => setAdvancedSettings({...advancedSettings, laser_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
+                                  <div><Label className="text-[10px] text-slate-400 uppercase">Schritt</Label><Input type="number" value={advancedSettings.laser_step} onChange={e => setAdvancedSettings({...advancedSettings, laser_step: Number(e.target.value)})} className="h-8 text-xs font-mono" /></div>
                                 </div>
                               </div>
                             </div>
@@ -615,18 +644,24 @@ export default function App() {
                       
                       {status.autocalibrate_state === 0 && status.autocalibrate_results && status.autocalibrate_results.length > 0 && (
                         <div className="mt-6 border-t border-slate-100 pt-6">
-                          <h4 className="text-sm font-semibold text-slate-700 mb-3">Top Calibration Results</h4>
+                          <h4 className="text-sm font-semibold text-slate-700 mb-1">Beste Kalibrierungsergebnisse</h4>
+                          <p className="text-xs text-slate-500 mb-3">Sortiert nach Leistung aus rohen Bildern mit kreisrunder ROI – ohne zeitliche Glättung. 100/100 bedeutet: alle erwarteten Zustände korrekt und kein Flickern. Bei der Messabdeckung ist „Leer P95“ kleiner besser, „Gefüllt P05“ größer besser. „Fehler“ sind falsche Schließungen im leeren sowie falsche Öffnungen im gefüllten Feld.</p>
                           <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
-                            <div className="max-h-64 overflow-y-auto">
-                              <table className="w-full text-left text-xs relative">
+                            <div className="max-h-72 overflow-y-auto overflow-x-auto">
+                              <table className="w-full min-w-[900px] text-left text-xs relative">
                                 <thead className="bg-slate-100 text-slate-600 sticky top-0 shadow-sm">
                                   <tr>
-                                    <th className="px-3 py-2 font-medium">Rank</th>
-                                    <th className="px-3 py-2 font-medium">Exp</th>
-                                    <th className="px-3 py-2 font-medium">Gain</th>
+                                    <th className="px-3 py-2 font-medium">Rang</th>
+                                    <th className="px-3 py-2 font-medium">Bel.</th>
+                                    <th className="px-3 py-2 font-medium">Verstärkung</th>
                                     <th className="px-3 py-2 font-medium">Laser</th>
-                                    <th className="px-3 py-2 font-medium">Score</th>
-                                    <th className="px-3 py-2 font-medium text-right">Action</th>
+                                    <th className="px-3 py-2 font-medium">Leistung</th>
+                                    <th className="px-3 py-2 font-medium">Rohdaten-Zuverlässigkeit</th>
+                                    <th className="px-3 py-2 font-medium">Fehler</th>
+                                    <th title="Leer P95: In 95 % der Rohbilder lag die Abdeckung höchstens bei diesem Wert. Kleiner ist besser. Gefüllt P05: In 95 % der Rohbilder lag sie mindestens bei diesem Wert. Größer ist besser." className="px-3 py-2 font-medium">Messabdeckung</th>
+                                    <th className="px-3 py-2 font-medium">Flickern</th>
+                                    <th className="px-3 py-2 font-medium">Vorgeschlagener Schwellwert</th>
+                                    <th className="px-3 py-2 font-medium text-right">Aktion</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-200">
@@ -636,29 +671,21 @@ export default function App() {
                                       <td className="px-3 py-2">{res.exposure}</td>
                                       <td className="px-3 py-2">{res.gain}</td>
                                       <td className="px-3 py-2">{res.laser}</td>
-                                      <td className="px-3 py-2">
-                                        <span className="font-semibold text-emerald-600">{res.score}/42</span>
-                                        <span className="text-slate-400 ml-1">(var: {res.var.toFixed(1)})</span>
+                                      <td className={`px-3 py-2 font-bold ${res.performance_score >= 95 ? 'text-emerald-600' : res.performance_score >= 80 ? 'text-amber-600' : 'text-red-600'}`} title="100 bedeutet: jedes Rohbild war korrekt und es gab kein Flickern. Niedrigere Werte bestrafen unzuverlässige Löcher, falsche Bilder, Fehler des schlechtesten Lochs und Zustandswechsel.">{res.performance_score?.toFixed(1) ?? '—'}<span className="text-slate-400 font-normal"> / 100</span></td>
+                                      <td className="px-3 py-2 font-semibold text-emerald-600">
+                                        {res.empty_reliable_holes !== undefined ? `${res.empty_reliable_holes}/42 offen · ${res.filled_reliable_holes}/42 gefüllt` : `${res.score}/42 roh-offen`}
                                       </td>
+                                      <td className="px-3 py-2">{res.raw_errors ?? '—'}<span className="text-slate-400 ml-1">schlechtestes {Math.round((res.worst_error_rate || 0) * 100)}%</span></td>
+                                      <td className="px-3 py-2">{res.filled_p05_coverage !== undefined ? `leer ≤${Math.round(res.empty_p95_coverage * 100)}% · gefüllt ≥${Math.round(res.filled_p05_coverage * 100)}%` : `leer ≤${Math.round((res.empty_p95_coverage || 0) * 100)}%`}</td>
+                                      <td className="px-3 py-2">{res.flicker_transitions ?? '—'} Wechsel</td>
+                                      <td className="px-3 py-2 font-mono">{res.suggested_occupancy_threshold ?? '—'}</td>
                                       <td className="px-3 py-2 text-right">
-                                        <Button 
-                                          size="sm" 
-                                          variant="outline" 
-                                          className="h-7 text-xs border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21] hover:text-white"
-                                          onClick={() => {
-                                          fetch('/api/update_realsense', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                              exposure: res.exposure,
-                                              gain: res.gain,
-                                              laser_power: res.laser
-                                            })
-                                          }).then(() => setPendingOverrides({}))
-                                        }}
-                                        >
-                                          Use
-                                        </Button>
+                                        <div className="flex justify-end gap-2">
+                                          <Button title="Übernimmt diese Belichtung, diesen Gain und diese Laserleistung vorübergehend für die Kamera." size="sm" variant="outline" className="h-7 text-xs border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21] hover:text-white" onClick={() => action('autocalibrate/use_result', { index: idx })}>Kamera verwenden</Button>
+                                          {res.suggested_occupancy_threshold !== null && res.suggested_occupancy_threshold !== undefined && (
+                                            <Button size="sm" variant="outline" className="h-7 text-xs" title="Schreibt diesen Wert in calibration.json. Das Spiel lädt ihn beim Start." onClick={() => action('autocalibrate/use_result', { index: idx, apply_suggested_threshold: true, save_threshold_for_game: true })}>Schwellwert fürs Spiel übernehmen</Button>
+                                          )}
+                                        </div>
                                       </td>
                                     </tr>
                                   ))}
@@ -668,14 +695,14 @@ export default function App() {
                           </div>
                         </div>
                       )}
-                      
+
                       {status.autocalibrate_state === 4 && (
                         <div className="flex flex-col gap-3">
                           <div className="flex items-center gap-2">
                             <Button size="lg" disabled className="bg-slate-300 text-slate-500 px-6 flex-1">
-                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> Quick Scanning Board...
+                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> Schnelles Scannen des Felds …
                             </Button>
-                            <Button variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Cancel</Button>
+                            <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>
                           </div>
                           <div className="w-full bg-slate-200 rounded-full h-2">
                             <div className="bg-[#b1ca21] h-2 rounded-full transition-all duration-300" style={{ width: `${(status.autocalibrate_progress || 0) * 100}%` }}></div>
@@ -687,9 +714,9 @@ export default function App() {
                         <div className="flex flex-col gap-3">
                           <div className="flex items-center gap-2">
                             <Button size="lg" disabled className="bg-slate-300 text-slate-500 px-6 flex-1">
-                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> Step 1: Scanning Empty Board...
+                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> Schritt 1: Leeres Feld wird gescannt …
                             </Button>
-                            <Button variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Cancel</Button>
+                            <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>
                           </div>
                           <div className="w-full bg-slate-200 rounded-full h-2">
                             <div className="bg-[#b1ca21] h-2 rounded-full transition-all duration-300" style={{ width: `${(status.autocalibrate_progress || 0) * 100}%` }}></div>
@@ -700,10 +727,10 @@ export default function App() {
                       {status.autocalibrate_state === 2 && (
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center gap-4">
-                            <Button size="lg" onClick={() => action('autocalibrate_step2')} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white px-6 animate-pulse">
-                              <RefreshCw className="w-4 h-4 mr-2" /> Scan Filled Board (Step 2)
+                            <Button title="Startet die zweite Messung, nachdem alle 42 Löcher mit Steinen gefüllt wurden." size="lg" onClick={() => action('autocalibrate_step2')} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white px-6 animate-pulse">
+                              <RefreshCw className="w-4 h-4 mr-2" /> Gefülltes Feld scannen (Schritt 2)
                             </Button>
-                            <Button variant="outline" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Cancel</Button>
+                            <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>
                           </div>
                         </div>
                       )}
@@ -712,9 +739,9 @@ export default function App() {
                         <div className="flex flex-col gap-3">
                           <div className="flex items-center gap-2">
                             <Button size="lg" disabled className="bg-slate-300 text-slate-500 px-6 flex-1">
-                              <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Step 2: Scanning Filled Board...
+                              <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Schritt 2: Gefülltes Feld wird gescannt …
                             </Button>
-                            <Button variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Cancel</Button>
+                            <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>
                           </div>
                           <div className="w-full bg-slate-200 rounded-full h-2">
                             <div className="bg-[#b1ca21] h-2 rounded-full transition-all duration-300" style={{ width: `${(status.autocalibrate_progress || 0) * 100}%` }}></div>
@@ -723,22 +750,28 @@ export default function App() {
                       )}
                     </div>
                   </Card>
+                </div>
+              )}
 
-                  <Card className="bg-white border-slate-200 shadow-sm">
+              {realsenseSubTab === 'manual' && (
+                <div className="space-y-6">
+                  <Card className="bg-white border-slate-200 shadow-sm rounded-tl-none">
                     <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                      <CardTitle className="text-lg text-slate-800">Manual Overrides</CardTitle>
+                      <CardTitle className="text-lg text-slate-800">Manuelle Tiefensensor-Einstellungen</CardTitle>
+                      <CardDescription className="text-slate-500">Nur Tiefenbelichtung, Gain, Projektorleistung und Hardware-Voreinstellung.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <SliderWithInput label="Exposure" description="Camera exposure time (lower values reduce blur but darken image)." value={pendingOverrides.exposure !== undefined ? pendingOverrides.exposure : status.exposure} min={1} max={10000} step={50} onChange={(v) => setPendingOverrides({...pendingOverrides, exposure: v})} />
-                        <SliderWithInput label="Gain" description="Sensor signal gain (amplifies signal but increases noise)." value={pendingOverrides.gain !== undefined ? pendingOverrides.gain : status.gain} min={16} max={248} onChange={(v) => setPendingOverrides({...pendingOverrides, gain: v})} />
-                        <SliderWithInput label="Laser Power" description="Intensity of the IR projector for depth estimation." value={pendingOverrides.laser_power !== undefined ? pendingOverrides.laser_power : status.laser_power} min={0} max={360} onChange={(v) => setPendingOverrides({...pendingOverrides, laser_power: v})} />
-                        <SliderWithInput label="Visual Preset" description="Hardware optimization preset (3 = High Accuracy)." value={pendingOverrides.visual_preset !== undefined ? pendingOverrides.visual_preset : status.visual_preset} min={0} max={5} onChange={(v) => setPendingOverrides({...pendingOverrides, visual_preset: v})} />
+                        <SliderWithInput label="Belichtung" description="Belichtungszeit der Tiefenkamera. Niedrigere Werte verringern Bewegungsunschärfe, machen das Bild aber dunkler." value={pendingOverrides.exposure !== undefined ? pendingOverrides.exposure : status.exposure} min={1} max={10000} step={50} disabled={manualControlsLocked} onChange={(v) => setPendingOverrides({...pendingOverrides, exposure: v})} />
+                        <SliderWithInput label="Verstärkung" description="Signalverstärkung des Sensors. Verstärkt das Signal, kann aber Rauschen erhöhen." value={pendingOverrides.gain !== undefined ? pendingOverrides.gain : status.gain} min={16} max={248} disabled={manualControlsLocked} onChange={(v) => setPendingOverrides({...pendingOverrides, gain: v})} />
+                        <SliderWithInput label="Laserleistung" description="Intensität des Infrarot-Projektors für die Tiefenschätzung." value={pendingOverrides.laser_power !== undefined ? pendingOverrides.laser_power : status.laser_power} min={0} max={360} disabled={manualControlsLocked} onChange={(v) => setPendingOverrides({...pendingOverrides, laser_power: v})} />
+                        <SliderWithInput label="Hardware-Voreinstellung" description="Hardware-Optimierungsvoreinstellung (3 = hohe Genauigkeit)." value={pendingOverrides.visual_preset !== undefined ? pendingOverrides.visual_preset : status.visual_preset} min={0} max={5} disabled={manualControlsLocked} onChange={(v) => setPendingOverrides({...pendingOverrides, visual_preset: v})} />
                       </div>
                       <div className="flex justify-end mt-2">
                         <Button 
+                          title="Überträgt die geänderten manuellen Werte an die Tiefenkamera. Sie werden erst mit dem Speicherknopf oben dauerhaft gesichert."
                           className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white disabled:opacity-50"
-                          disabled={Object.keys(pendingOverrides).length === 0}
+                          disabled={manualControlsLocked || Object.keys(pendingOverrides).length === 0}
                           onClick={() => {
                             if (Object.keys(pendingOverrides).length === 0) return;
                             fetch('/api/update_realsense', {
@@ -748,7 +781,7 @@ export default function App() {
                             }).then(() => setPendingOverrides({}))
                           }}
                         >
-                          Apply Manual Overrides
+                          Manuelle Einstellungen anwenden
                         </Button>
                       </div>
                     </CardContent>
@@ -758,25 +791,25 @@ export default function App() {
 
               {realsenseSubTab === 'filtering' && (
                 <div className="space-y-6">
-                  <Card className="bg-white border-slate-200 shadow-sm flex flex-col">
+                  <Card className="bg-white border-slate-200 shadow-sm rounded-tl-none flex flex-col">
                     <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                      <CardTitle className="text-lg text-slate-800">Depth Filtering</CardTitle>
+                      <CardTitle className="text-lg text-slate-800">Tiefenfilter</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <SliderWithInput label="Min Depth (mm)" description="Ignore all pixels closer than this distance." value={status.min_depth} max={5000} step={10} onChange={(v) => updateRealSense('min_depth', v)} />
-                      <SliderWithInput label="Max Depth (mm)" description="Ignore all pixels further than this distance." value={status.max_depth} max={5000} step={10} onChange={(v) => updateRealSense('max_depth', v)} />
+                      <SliderWithInput label="Minimale Tiefe (mm)" description="Alle Pixel näher als diese Entfernung ignorieren." value={status.min_depth} max={5000} step={10} disabled={manualControlsLocked} onChange={(v) => updateRealSense('min_depth', v)} />
+                      <SliderWithInput label="Maximale Tiefe (mm)" description="Alle Pixel weiter entfernt als diese Entfernung ignorieren." value={status.max_depth} max={5000} step={10} disabled={manualControlsLocked} onChange={(v) => updateRealSense('max_depth', v)} />
                       <div className="mt-6 p-5 bg-white rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
                         <Label className="text-slate-700 font-medium tracking-wide text-sm cursor-pointer" htmlFor="emitter-toggle">
-                          Emitter Enabled
+                          Infrarot-Emitter aktiviert
                         </Label>
-                        <input id="emitter-toggle" type="checkbox" checked={status.emitter === 1} onChange={(e) => updateRealSense('emitter', e.target.checked ? 1 : 0)} className="w-5 h-5 rounded" />
+                        <input title="Schaltet den Infrarot-Projektor der Tiefenkamera ein oder aus." id="emitter-toggle" type="checkbox" disabled={manualControlsLocked} checked={status.emitter === 1} onChange={(e) => updateRealSense('emitter', e.target.checked ? 1 : 0)} className="w-5 h-5 rounded" />
                       </div>
                     </CardContent>
                   </Card>
                 </div>
               )}
-
-
+                </div>
+              </div>
 
             </div>
           </div>

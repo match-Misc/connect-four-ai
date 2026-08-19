@@ -101,6 +101,19 @@ class ConnectFourDetector:
         # RealSense camera settings
         self.realsense_settings = None
 
+    @staticmethod
+    def circular_roi_pixels(frame, cx, cy, radius):
+        """Return pixels from the circular hole area, excluding square corners."""
+        radius = max(1, int(radius))
+        y_min, y_max = max(0, cy - radius), min(frame.shape[0], cy + radius + 1)
+        x_min, x_max = max(0, cx - radius), min(frame.shape[1], cx + radius + 1)
+        roi = frame[y_min:y_max, x_min:x_max]
+        if roi.size == 0:
+            return np.array([], dtype=frame.dtype)
+        yy, xx = np.ogrid[y_min:y_max, x_min:x_max]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2
+        return roi[mask]
+
     def load_calibration(self):
         """Load calibration data from JSON file"""
         try:
@@ -371,15 +384,12 @@ class ConnectFourDetector:
                     and 0 <= y < adjusted_frame.shape[0]
                 ):
                     # Sample a region around the hole center
-                    radius = int(self.hole_diameter/2)
-                    roi = adjusted_frame[
-                        max(0, y - radius) : min(adjusted_frame.shape[0], y + radius),
-                        max(0, x - radius) : min(adjusted_frame.shape[1], x + radius),
-                    ]
+                    radius = int(self.hole_diameter / 2)
+                    roi_pixels = self.circular_roi_pixels(adjusted_frame, x, y, radius)
 
-                    if roi.size > 0:
-                        # Compute average G value from ROI (frame is BGR)
-                        avg_bgr = cv2.mean(roi)[:3]
+                    if roi_pixels.size > 0:
+                        # Compute average colour from the same circular hole area.
+                        avg_bgr = np.mean(roi_pixels, axis=0)[:3]
                         avg_g = float(avg_bgr[1])
                         self.last_g_values[row][col] = avg_g
 
@@ -388,19 +398,15 @@ class ConnectFourDetector:
                         depth_ok = False
                         measured_depth = None
                         if self.current_depth_m is not None:
-                            # Sample mean depth using full hole diameter from calibration
-                            h, w = self.current_depth_m.shape[:2]
+                            # Sample depth using the identical circular hole area.
                             radius = int(self.hole_diameter / 2)
-                            y0, y1 = max(0, y - radius), min(h, y + radius + 1)
-                            x0, x1 = max(0, x - radius), min(w, x + radius + 1)
-                            d_roi = self.current_depth_m[y0:y1, x0:x1]
-                            # Reject only if more than 50% of pixels are missing depth
-                            if d_roi.size > 0:
-                                valid_pixels = np.sum(d_roi > 0)
-                                valid_ratio = valid_pixels / d_roi.size
+                            depth_pixels = self.circular_roi_pixels(self.current_depth_m, x, y, radius)
+                            # Reject only if more than 5% of circular ROI pixels are missing depth.
+                            if depth_pixels.size > 0:
+                                valid_pixels = depth_pixels[depth_pixels > 0]
+                                valid_ratio = valid_pixels.size / depth_pixels.size
                                 if valid_ratio >= 0.95:
-                                    # At least 95% valid, calculate mean from valid pixels only
-                                    measured_depth = float(np.mean(d_roi[d_roi > 0]))
+                                    measured_depth = float(np.mean(valid_pixels))
                                 else:
                                     # More than 5% missing depth
                                     measured_depth = None

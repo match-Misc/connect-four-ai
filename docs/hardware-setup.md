@@ -87,11 +87,12 @@ Each time the game is set up in a new location, the camera alignment and coin co
    - If the depth readings are noisy or unsteady, use the **Quick Calibration** tool. (Note: configuring a wider sweep range will take longer). Once complete, it will apply the best hardware settings.
    - Click **Save Profile**.
 
-3. **Step 3: Color Calibration:**
-   - Switch to the Color Calibration tab.
-   - Place Player 1 and Player 2 stones in the highlighted columns as instructed on the screen.
-   - Click **Calibrate Colors** to automatically detect the color profiles.
-   - Click **Save Colors**.
+3. **Step 3: Colour Calibration:**
+   - The currently used colour references are always shown above the calibration tabs. Use **Save RGB settings to config** and **Save calibrated colours** there to persist the selected settings and references.
+   - In the **Automatic calibration** tab, choose a precision level: **Fast** captures one-row and full-board layouts; **Standard** (recommended) captures one, three and six rows; **Thorough** takes more frames and evaluates the broadest filter range. Each option shows an estimated automatic capture time; the time spent placing stones is not included. Progress bars show the remaining time for the active capture or optimisation.
+   - In the **Manual calibration** tab, adjust RGB exposure/gain and contrast, saturation, or brightness. Slider changes remain pending until **Apply Manual Settings** is pressed. The lock option is available only here.
+   - For each displayed step, fill the bottom rows with Player 1 (black) in columns 1, 3, 5 and 7 and Player 2 (green) in columns 2, 4 and 6. The feed marks the exact slots. Click **Capture this layout** only after the board is still.
+   - The last capture jointly evaluates fixed RGB exposure/gain and colour-filtering settings using equally weighted samples from all occupancy levels. A ranked table lets you try one of the best alternatives before persisting. Use the two save buttons above the tabs only after choosing the result you want to keep.
 
 4. **Step 4: Detection Calibration:**
    - Switch to the Detection Calibration tab.

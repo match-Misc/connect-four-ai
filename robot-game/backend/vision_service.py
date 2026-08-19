@@ -38,12 +38,17 @@ class VisionService:
         self.min_depth = 0
         self.max_depth = 2000
         self.emitter = 1
+        # Keep the RGB sensor fixed to the values used during colour calibration.
+        self.color_exposure = 5000
+        self.color_gain = 16
+        self.color_auto_exposure = 0
 
         # RealSense hardware
         self.pipeline = None
         self.config = None
         self.align = None
         self.depth_sensor = None
+        self.color_sensor = None
 
         # Threading
         self.frame_lock = threading.Lock()
@@ -104,23 +109,49 @@ class VisionService:
                 self.min_depth = data.get("min_depth_mm", self.min_depth)
                 self.max_depth = data.get("max_depth_mm", self.max_depth)
                 self.emitter = data.get("emitter_enabled", self.emitter)
+                self.color_exposure = data.get("color_exposure", self.color_exposure)
+                self.color_gain = data.get("color_gain", self.color_gain)
+                self.color_auto_exposure = data.get("color_auto_exposure", self.color_auto_exposure)
         except Exception as e:
             print(f"Failed to load realsense calibration: {e}")
 
+    @staticmethod
+    def _sensor_supports(sensor, option):
+        try:
+            return sensor is not None and sensor.supports(option)
+        except Exception:
+            return False
+
+    def _find_color_sensor(self, device):
+        for sensor in device.query_sensors():
+            try:
+                if not sensor.is_depth_sensor() and sensor.supports(rs.option.enable_auto_exposure):
+                    return sensor
+            except Exception:
+                continue
+        return None
+
     def apply_realsense_params(self):
+        def safe_set(sensor, option, value, delay=0.1):
+            if not self._sensor_supports(sensor, option):
+                return
+            try:
+                sensor.set_option(option, float(value))
+                time.sleep(delay)
+            except Exception as e:
+                print(f"Error setting {option}: {e}")
+
         if self.depth_sensor:
-            def safe_set(opt, val, delay=0.1):
-                try:
-                    self.depth_sensor.set_option(opt, float(val))
-                    time.sleep(delay)
-                except Exception as e:
-                    print(f"Error setting param: {e}")
-            
-            safe_set(rs.option.visual_preset, self.visual_preset, 0.2)
-            safe_set(rs.option.exposure, self.exposure)
-            safe_set(rs.option.gain, self.gain)
-            safe_set(rs.option.laser_power, self.laser_power)
-            safe_set(rs.option.emitter_enabled, self.emitter)
+            safe_set(self.depth_sensor, rs.option.visual_preset, self.visual_preset, 0.2)
+            safe_set(self.depth_sensor, rs.option.exposure, self.exposure)
+            safe_set(self.depth_sensor, rs.option.gain, self.gain)
+            safe_set(self.depth_sensor, rs.option.laser_power, self.laser_power)
+            safe_set(self.depth_sensor, rs.option.emitter_enabled, self.emitter)
+        if self.color_sensor:
+            safe_set(self.color_sensor, rs.option.enable_auto_exposure, self.color_auto_exposure)
+            if not self.color_auto_exposure:
+                safe_set(self.color_sensor, rs.option.exposure, self.color_exposure)
+                safe_set(self.color_sensor, rs.option.gain, self.color_gain)
 
     def start(self):
         if self.running:
@@ -132,6 +163,7 @@ class VisionService:
             self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
             profile = self.pipeline.start(self.config)
             self.depth_sensor = profile.get_device().first_depth_sensor()
+            self.color_sensor = self._find_color_sensor(profile.get_device())
             self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
             self.apply_realsense_params()
             self.align = rs.align(rs.stream.color)
@@ -193,6 +225,7 @@ class VisionService:
                 print(f"VisionService: error stopping pipeline ({e})")
             self.pipeline = None
         self.depth_sensor = None
+        self.color_sensor = None
         self.align = None
 
     def get_hole_coordinates(self):
@@ -220,6 +253,27 @@ class VisionService:
         beta = self.brightness
         frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
         return frame
+
+    def circular_roi_pixels(self, frame, cx, cy, radius):
+        """Return only pixels inside the requested physical circular ROI."""
+        radius = max(1, int(radius))
+        y_min, y_max = max(0, cy - radius), min(frame.shape[0], cy + radius + 1)
+        x_min, x_max = max(0, cx - radius), min(frame.shape[1], cx + radius + 1)
+        roi = frame[y_min:y_max, x_min:x_max]
+        if roi.size == 0:
+            return np.array([], dtype=frame.dtype)
+        yy, xx = np.ogrid[y_min:y_max, x_min:x_max]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2
+        return roi[mask]
+
+    def depth_roi_measurement(self, depth_frame, cx, cy):
+        """Use the same circular physical hole area as calibration and overlay."""
+        radius = max(1, self.hole_diameter // 2)
+        circle_pixels = self.circular_roi_pixels(depth_frame, cx, cy, radius)
+        if circle_pixels.size == 0:
+            return 0.0, np.array([], dtype=depth_frame.dtype)
+        valid_pixels = circle_pixels[(circle_pixels > 0) & (circle_pixels >= self.min_depth) & (circle_pixels <= self.max_depth)]
+        return float(valid_pixels.size / circle_pixels.size), valid_pixels
 
     def get_board_state(self) -> List[List[int]]:
         # Returns the most recent detection: a 6x7 array, 0 empty / 1 player1 /
@@ -250,13 +304,8 @@ class VisionService:
                 x, y = coords[idx]
                 if 0 <= x < adjusted_frame.shape[1] and 0 <= y < adjusted_frame.shape[0]:
                     if 0 <= x < depth_frame.shape[1] and 0 <= y < depth_frame.shape[0]:
-                        radius = self.hole_diameter // 2
-                        y_min, y_max = max(0, y - radius), min(depth_frame.shape[0], y + radius)
-                        x_min, x_max = max(0, x - radius), min(depth_frame.shape[1], x + radius)
-                        roi = depth_frame[y_min:y_max, x_min:x_max]
-                        valid_pixels = roi[(roi >= self.min_depth) & (roi <= self.max_depth)]
-                        
-                        if valid_pixels.size > 0 and roi.size > 0 and (valid_pixels.size / roi.size) >= self.occupancy_threshold:
+                        coverage, valid_pixels = self.depth_roi_measurement(depth_frame, x, y)
+                        if valid_pixels.size > 0 and coverage >= self.occupancy_threshold:
                             d = np.median(valid_pixels)
                         else:
                             d = 0
@@ -269,9 +318,9 @@ class VisionService:
                             if median_d > 0:
                                 # Found a token
                                 c_radius = max(3, self.hole_diameter // 4)
-                                c_roi = adjusted_frame[max(0, y - c_radius):min(adjusted_frame.shape[0], y + c_radius), max(0, x - c_radius):min(adjusted_frame.shape[1], x + c_radius)]
-                                if c_roi.size > 0:
-                                    avg_c = cv2.mean(c_roi)[:3]
+                                c_pixels = self.circular_roi_pixels(adjusted_frame, x, y, c_radius)
+                                if c_pixels.size > 0:
+                                    avg_c = np.mean(c_pixels, axis=0)[:3]
                                     dist1 = sum((a - b) ** 2 for a, b in zip(avg_c, self.player1_color))
                                     dist2 = sum((a - b) ** 2 for a, b in zip(avg_c, self.player2_color))
                                     board[row][col] = 1 if dist1 < dist2 else 2
