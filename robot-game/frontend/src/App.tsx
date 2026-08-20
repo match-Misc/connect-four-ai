@@ -80,6 +80,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [winner, setWinner] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [invalidStones, setInvalidStones] = useState<number[][]>([]);
+  const [checks, setChecks] = useState({ gravity: { active: false, violation_count: 0, last_violation_at: null as number | null, invalid_holes: [] as number[][] }, board_stable: true, rule_error: null as string | null });
   const [debounceTime, setDebounceTime] = useState<number>(0.5);
   const [aiEnabled, setAiEnabled] = useState<boolean>(true);
   const [robotTargetCol, setRobotTargetCol] = useState<number | null>(null);
@@ -134,6 +135,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       // same null the backend sends while a game is still running.
       setWinner(data.winner ?? null);
       setErrorMsg(data.error_msg || null);
+      if (data.checks) setChecks(data.checks);
       const stones = data.invalid_stones || NO_STONES;
       setInvalidStones(prev => (sameGrid(prev, stones) ? prev : stones));
       if (data.debounce_time !== undefined) {
@@ -525,6 +527,23 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                       <p>Kein Bedienpanel verbunden. Der Roboter verbindet sich selbst zum Backend – starte sein Programm, um die Verbindung wiederherzustellen.</p>
                     </div>
                   )}
+                </div>
+
+                <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+                  <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                    <Activity size={20} className="text-amber-500" /> Prüfstatus
+                  </h2>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div><p className="font-bold text-gray-700 dark:text-gray-200">Schwerkraft</p><p className="text-xs text-gray-500 dark:text-gray-400">Schwebende Steine werden im Hintergrund blockiert, ohne die Spielansicht zu unterbrechen.</p></div>
+                      <span className={cn("shrink-0 px-2 py-1 rounded-full text-xs font-bold", checks.gravity.active ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300")}>{checks.gravity.active ? 'Verstoß aktiv' : 'OK'}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400"><span>Verstöße seit Serverstart</span><span className="font-bold text-gray-700 dark:text-gray-200">{checks.gravity.violation_count}</span></div>
+                    {checks.gravity.last_violation_at && <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400"><span>Letzter Verstoß</span><span className="font-bold text-gray-700 dark:text-gray-200">{new Date(checks.gravity.last_violation_at * 1000).toLocaleTimeString('de-DE')}</span></div>}
+                    {checks.gravity.active && <p className="text-xs text-amber-700 dark:text-amber-300">Betroffene Löcher: {checks.gravity.invalid_holes.map(([row, col]) => `R${row + 1}/S${col + 1}`).join(', ')}</p>}
+                    <div className="border-t border-gray-100 dark:border-gray-800 pt-3 flex items-center justify-between"><span className="font-bold text-gray-700 dark:text-gray-200">Brett stabil</span><span className={cn("text-xs font-bold", checks.board_stable ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300")}>{checks.board_stable ? 'OK' : 'Entprellung läuft'}</span></div>
+                    <div className="flex items-center justify-between"><span className="font-bold text-gray-700 dark:text-gray-200">Spielregeln</span><span className={cn("text-xs font-bold", checks.rule_error ? "text-red-700 dark:text-red-300" : "text-green-700 dark:text-green-300")}>{checks.rule_error ? 'Fehler' : 'OK'}</span></div>
+                  </div>
                 </div>
 
                 <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col gap-4">

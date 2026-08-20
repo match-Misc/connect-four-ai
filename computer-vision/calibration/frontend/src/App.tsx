@@ -83,6 +83,8 @@ export default function App() {
   const [colorCalibrationTab, setColorCalibrationTab] = useState<'automatic' | 'manual'>('automatic')
   const [colorPrecision, setColorPrecision] = useState<'fast' | 'standard' | 'thorough'>('standard')
   const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null)
+  const [colorCaptureRequesting, setColorCaptureRequesting] = useState(false)
+  const [colorCalibrationFeedback, setColorCalibrationFeedback] = useState<string | null>(null)
 
   const fetchStatus = async () => {
     try {
@@ -176,6 +178,23 @@ export default function App() {
       body: data ? JSON.stringify(data) : undefined
     })
     fetchStatus()
+  }
+
+  const captureColourStage = async () => {
+    setColorCaptureRequesting(true)
+    setColorCalibrationFeedback(null)
+    try {
+      const response = await fetch('/api/color_calibration/capture', { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setColorCalibrationFeedback(data.status || 'Der Schritt konnte nicht gestartet werden.')
+      }
+    } catch {
+      setColorCalibrationFeedback('Der Kalibrierungsserver ist nicht erreichbar.')
+    } finally {
+      setColorCaptureRequesting(false)
+      fetchStatus()
+    }
   }
 
   const saveConfiguration = async (endpoint: string, description: string) => {
@@ -315,27 +334,27 @@ export default function App() {
           <div className={activeTab === 'nfc-testing' ? 'block' : 'hidden'}>
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">
-                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">NFC Testing</h2>
-                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Verify the connection to the USB NFC reader and test scanning tags.</p>
+                <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">NFC-/RFID-Test</h2>
+                <p className="text-slate-500 mt-2 text-sm max-w-2xl min-h-[40px]">Prüfe die Verbindung zum USB-Reader und teste das Einlesen von Karten oder Tags.</p>
               </header>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card className="bg-white border-slate-200 shadow-sm">
                   <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                    <CardTitle className="text-lg text-slate-800">Connection Status</CardTitle>
+                    <CardTitle className="text-lg text-slate-800">Verbindungsstatus</CardTitle>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-4 items-center justify-center py-8">
                     {status.nfc_connected ? (
                       <div className="flex flex-col items-center gap-3 text-emerald-600">
                         <CheckCircle2 className="w-16 h-16" />
-                        <span className="text-xl font-bold">Connected</span>
-                        <span className="text-sm text-slate-500">USB Device detected at /dev/ttyUSB0</span>
+                        <span className="text-xl font-bold">Verbunden</span>
+                        <span className="text-sm text-slate-500">USB-HID- oder serieller RFID-Reader erkannt</span>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center gap-3 text-red-500">
                         <RefreshCw className="w-16 h-16 animate-spin" />
-                        <span className="text-xl font-bold">Disconnected</span>
-                        <span className="text-sm text-slate-500">Please plug in the USB NFC reader</span>
+                        <span className="text-xl font-bold">Nicht lesebereit</span>
+                        <span className="text-sm text-slate-500">{status.nfc_reader?.error || 'Bitte den USB-NFC-/RFID-Reader anschließen'}</span>
                       </div>
                     )}
                   </CardContent>
@@ -343,20 +362,20 @@ export default function App() {
 
                 <Card className="bg-white border-slate-200 shadow-sm">
                   <CardHeader className="pb-4 border-b border-slate-100 mb-4">
-                    <CardTitle className="text-lg text-slate-800">Last Scanned Tag</CardTitle>
+                    <CardTitle className="text-lg text-slate-800">Zuletzt gelesener Tag</CardTitle>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-4 items-center justify-center py-8">
                     {status.nfc_last_tag ? (
                       <div className="flex flex-col items-center gap-3">
                         <Nfc className="w-16 h-16 text-emerald-600" />
                         <span className="text-2xl font-mono font-bold text-slate-800">{status.nfc_last_tag}</span>
-                        <span className="text-sm text-slate-500">Successfully scanned</span>
+                        <span className="text-sm text-slate-500">Erfolgreich gelesen</span>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center gap-3 text-slate-400">
                         <Nfc className="w-16 h-16 opacity-50" />
-                        <span className="text-xl font-medium">No Tag Scanned</span>
-                        <span className="text-sm text-slate-400">Hold a tag against the reader</span>
+                        <span className="text-xl font-medium">Noch kein Tag gelesen</span>
+                        <span className="text-sm text-slate-400">Karte oder Tag an den Reader halten</span>
                       </div>
                     )}
                   </CardContent>
@@ -416,7 +435,7 @@ export default function App() {
             <div className="space-y-6 lg:space-y-8">
               <header className="mb-4 lg:mb-6">
                 <h2 className="text-2xl lg:text-3xl font-bold text-slate-800 tracking-tight">Colour Calibration</h2>
-                <p className="text-slate-500 mt-2 text-sm max-w-3xl">The guided flow samples legal board positions at low, medium and full occupancy. Put Player 1 (black) in columns 1, 3, 5 and 7; put Player 2 (green) in columns 2, 4 and 6. The live feed marks only the slots needed for the current step.</p>
+                <p className="text-slate-500 mt-2 text-sm max-w-3xl">Die geführte Kalibrierung misst zulässige Belegungen mit wenig, mittleren und vielen Steinen. Lege Spieler 1 (grün) in die Spalten 1, 3, 5 und 7 und Spieler 2 (schwarz) in die Spalten 2, 4 und 6. Das Kamerabild markiert nur die für den aktuellen Schritt benötigten Plätze.</p>
               </header>
 
               <Card className="bg-white border-slate-200 shadow-md overflow-hidden p-2">
@@ -440,8 +459,8 @@ export default function App() {
                   <CardDescription className="text-slate-500">These are the colour references currently used by detection.</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col md:flex-row gap-6">
-                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Player 1 (Black)</span>{status.player1_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player1_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player1_color[2]}, ${status.player1_color[1]}, ${status.player1_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
-                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Player 2 (Green)</span>{status.player2_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player2_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player2_color[2]}, ${status.player2_color[1]}, ${status.player2_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
+                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Spieler 1 (Grün)</span>{status.player1_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player1_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player1_color[2]}, ${status.player1_color[1]}, ${status.player1_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
+                  <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"><span className="font-medium text-slate-700">Spieler 2 (Schwarz)</span>{status.player2_color ? <div className="flex items-center gap-3"><span className="text-xs font-mono text-slate-500">BGR: [{status.player2_color.join(', ')}]</span><div className="w-8 h-8 rounded-full border-2 border-slate-300" style={{ backgroundColor: `rgb(${status.player2_color[2]}, ${status.player2_color[1]}, ${status.player2_color[0]})` }} /></div> : <span className="text-xs text-slate-400 italic">Not calibrated</span>}</div>
                 </CardContent>
               </Card>
 
@@ -464,11 +483,12 @@ export default function App() {
                   </CardContent>
                 </Card>
                 <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                  <Button onClick={() => action('color_calibration/start', { precision: colorPrecision })} disabled={manualControlsLocked || status.corners?.length < 4 || status.is_color_capturing || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white h-12"><RefreshCw className="w-4 h-4 mr-2" /> Start guided calibration</Button>
-                  <Button onClick={() => action('color_calibration/capture')} disabled={manualControlsLocked || status.color_calibration_stage_rows === null || status.color_calibration_stage_rows === undefined || status.is_color_capturing || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white h-12"><CheckCircle2 className={`w-4 h-4 mr-2 ${status.is_color_capturing ? 'animate-pulse' : ''}`} />{status.is_color_capturing ? 'Capturing…' : 'Capture this layout'}</Button>
+                  <Button title="Startet die geführte Farbkalibrierung von vorn. Bereits erfasste Schritte werden dabei verworfen." onClick={() => action('color_calibration/start', { precision: colorPrecision })} disabled={manualControlsLocked || status.corners?.length < 4 || status.is_color_capturing || status.is_color_autocalibrating} variant="outline" className="flex-1 border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 h-12"><RefreshCw className="w-4 h-4 mr-2" />{status.color_calibration_stage_rows !== null && status.color_calibration_stage_rows !== undefined ? 'Kalibrierung neu starten' : 'Geführte Kalibrierung starten'}</Button>
+                  <Button title="Misst die aktuell gefüllte Belegung und wechselt danach automatisch zum nächsten Schritt." onClick={captureColourStage} disabled={manualControlsLocked || colorCaptureRequesting || status.color_calibration_stage_rows === null || status.color_calibration_stage_rows === undefined || status.is_color_capturing || status.is_color_autocalibrating} className="flex-1 bg-[#b1ca21] hover:bg-[#a0b51e] text-white h-12"><CheckCircle2 className={`w-4 h-4 mr-2 ${(status.is_color_capturing || colorCaptureRequesting) ? 'animate-pulse' : ''}`} />{(status.is_color_capturing || colorCaptureRequesting) ? 'Schritt wird gestartet / gemessen …' : `Schritt ${(status.color_calibration_stage_index || 0) + 1} messen und weiter`}</Button>
                 </div>
-                {status.color_calibration_stage_rows !== null && status.color_calibration_stage_rows !== undefined && !status.is_color_autocalibrating && <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">Step {(status.color_calibration_stage_index || 0) + 1} of {status.color_calibration_stage_count}: fill the bottom {status.color_calibration_stage_rows} row{status.color_calibration_stage_rows === 1 ? '' : 's'}, then capture this layout.</p>}
-                {status.is_color_capturing && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2"><div className="flex justify-between text-sm font-medium text-slate-600"><span>Capturing RGB exposure/gain sweep{status.color_calibration_active_rgb_setting ? ` — exposure ${status.color_calibration_active_rgb_setting.exposure}, gain ${status.color_calibration_active_rgb_setting.gain}` : ''}</span><span>{Math.round((status.color_calibration_capture_progress || 0) * 100)}% · ~{Math.ceil(status.color_calibration_eta_seconds || 0)} s remaining</span></div><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21]" style={{ width: `${(status.color_calibration_capture_progress || 0) * 100}%` }} /></div></div>}
+                {status.color_calibration_stage_rows !== null && status.color_calibration_stage_rows !== undefined && !status.is_color_autocalibrating && <p className="text-sm text-slate-700 bg-[#b1ca21]/10 border border-[#b1ca21]/30 rounded-xl px-4 py-3"><span className="font-semibold">Schritt {(status.color_calibration_stage_index || 0) + 1} von {status.color_calibration_stage_count}:</span> Fülle die unteren {status.color_calibration_stage_rows} {status.color_calibration_stage_rows === 1 ? 'Reihe' : 'Reihen'} wie im Kamerabild markiert. Klicke anschließend auf <span className="font-semibold">„Schritt {(status.color_calibration_stage_index || 0) + 1} messen und weiter“</span>.</p>}
+                {(status.is_color_capturing || colorCaptureRequesting) && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2"><div className="flex justify-between text-sm font-medium text-slate-600"><span>{colorCaptureRequesting && !status.is_color_capturing ? 'Aufnahme wird gestartet …' : `RGB-Belichtung und Verstärkung werden gemessen${status.color_calibration_active_rgb_setting ? ` – Belichtung ${status.color_calibration_active_rgb_setting.exposure}, Verstärkung ${status.color_calibration_active_rgb_setting.gain}` : ''}`}</span><span>{Math.round((status.color_calibration_capture_progress || 0) * 100)}% · ca. {Math.ceil(status.color_calibration_eta_seconds || 0)} s</span></div><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21]" style={{ width: `${Math.max(colorCaptureRequesting ? 2 : 0, (status.color_calibration_capture_progress || 0) * 100)}%` }} /></div></div>}
+                {colorCalibrationFeedback && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">⚠ {colorCalibrationFeedback}</p>}
                 {status.is_color_autocalibrating && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2"><div className="flex justify-between text-sm font-medium text-slate-600"><span>Jointly selecting RGB exposure, gain and image filtering</span><span>{Math.round((status.color_autocalibrate_progress || 0) * 100)}% · ~{Math.ceil(status.color_calibration_eta_seconds || 0)} s remaining</span></div><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#b1ca21]" style={{ width: `${(status.color_autocalibrate_progress || 0) * 100}%` }} /></div></div>}
                 {status.color_autocalibrate_result && !status.is_color_autocalibrating && <p className="text-sm text-slate-600 bg-[#b1ca21]/10 border border-[#b1ca21]/20 rounded-xl px-4 py-3">Auto result: {status.color_autocalibrate_result.accuracy}% stage-balanced accuracy — RGB exposure {status.color_autocalibrate_result.rgb_exposure}, RGB gain {status.color_autocalibrate_result.rgb_gain}, contrast {status.color_autocalibrate_result.contrast}, saturation {status.color_autocalibrate_result.saturation}, brightness {status.color_autocalibrate_result.brightness}. Choose another ranked result below before saving if you prefer.</p>}
                 {status.color_autocalibrate_results?.length > 0 && !status.is_color_autocalibrating && <Card className="bg-white border-slate-200 shadow-sm overflow-hidden"><CardHeader className="pb-4 border-b border-slate-100"><CardTitle className="text-lg text-slate-800">Automatic calibration results</CardTitle><CardDescription className="text-slate-500">Try an alternative before using the save buttons above. The selected result is applied temporarily; saving remains explicit.</CardDescription></CardHeader><CardContent className="p-0 overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Accuracy</th><th className="px-3 py-3">Exposure</th><th className="px-3 py-3">Gain</th><th className="px-3 py-3">Contrast</th><th className="px-3 py-3">Saturation</th><th className="px-3 py-3">Brightness</th><th className="px-3 py-3 text-right">Aktion</th></tr></thead><tbody className="divide-y divide-slate-100">{status.color_autocalibrate_results.map((result: any, index: number) => <tr key={index} className="hover:bg-slate-50"><td className="px-3 py-3 font-medium text-slate-700">{index + 1}</td><td className="px-3 py-3">{result.accuracy}%<span className="text-slate-400"> · margin {result.margin}</span></td><td className="px-3 py-3">{result.rgb_exposure} µs</td><td className="px-3 py-3">{result.rgb_gain}</td><td className="px-3 py-3">{result.contrast}</td><td className="px-3 py-3">{result.saturation}</td><td className="px-3 py-3">{result.brightness}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" onClick={() => action('color_calibration/use_result', { index })} className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10">Use</Button></td></tr>)}</tbody></table></CardContent></Card>}
@@ -583,14 +603,21 @@ export default function App() {
                       {status.autocalibrate_state === 0 && (
                         <div className="flex flex-col gap-3">
                           <div className="text-sm font-semibold text-slate-700">Automatische Tiefenkalibrierung</div>
-                          <div className="flex flex-wrap items-center gap-4">
-                            <Button title="Prüft die gewählten Tiefensensor-Einstellungen am leeren Feld und wählt die beste schnelle Einstellung aus." size="lg" onClick={() => action('autocalibrate_single', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md px-6 transition-all">
-                              <RefreshCw className="w-4 h-4 mr-2" /> Schnell kalibrieren
+                          <div className="flex flex-wrap items-center gap-3">
+                            <Button title="Nur für ein vollständig leeres Feld. Sucht Einstellungen, bei denen alle 42 Löcher roh als offen erkannt bleiben." size="lg" onClick={() => action('autocalibrate_single', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white shadow-md px-5 transition-all">
+                              <RefreshCw className="w-4 h-4 mr-2" /> Schnell: leeres Feld
                             </Button>
-                            <Button title="Misst zuerst das leere und danach das vollständig gefüllte Feld. Liefert die verlässlichste Tiefenkalibrierung." size="lg" onClick={() => action('autocalibrate_step1', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 px-6 transition-all">
-                              Gründlich kalibrieren (2 Schritte)
+                            <Button title="Für ein vollständig mit 42 Steinen gefülltes Feld. Sucht Einstellungen, bei denen alle Löcher roh als geschlossen erkannt werden." size="lg" onClick={() => action('autocalibrate_filled', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 px-5 transition-all">
+                              Schnell: 42 Steine
+                            </Button>
+                            <Button title="Für ein teilbelegtes Feld. Verwendet nur die derzeit stabil als geschlossen erkannten Löcher als Referenz; leere Löcher werden nicht geprüft." size="lg" onClick={() => action('autocalibrate_partial', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-[#b1ca21] text-[#8a9e19] hover:bg-[#b1ca21]/10 px-5 transition-all">
+                              Schnell: Teilbelegung
+                            </Button>
+                            <Button title="Misst zuerst das leere und danach das vollständig gefüllte Feld. Prüft beide Zustände und liefert die verlässlichste Tiefenkalibrierung." size="lg" onClick={() => action('autocalibrate_step1', advancedSettings)} disabled={manualControlsLocked || status.corners?.length < 4} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-100 px-5 transition-all">
+                              Gründlich (2 Schritte)
                             </Button>
                           </div>
+                          <p className="text-xs leading-5 text-slate-500 max-w-4xl">Wichtig: Die Schnellmodi bewerten nur den jeweils gewählten Zustand. Für ein belegtes oder teilbelegtes Feld wird auf „geschlossen“ optimiert; mit einem belegten Feld niemals „Schnell: leeres Feld“ verwenden. Die 2-Schritt-Kalibrierung ist die einzige Variante, die offene und geschlossene Löcher gemeinsam prüft.</p>
                           
                           <div className="mt-4 p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-4">
                             <div className="flex items-center justify-between mb-2">
@@ -645,7 +672,7 @@ export default function App() {
                       {status.autocalibrate_state === 0 && status.autocalibrate_results && status.autocalibrate_results.length > 0 && (
                         <div className="mt-6 border-t border-slate-100 pt-6">
                           <h4 className="text-sm font-semibold text-slate-700 mb-1">Beste Kalibrierungsergebnisse</h4>
-                          <p className="text-xs text-slate-500 mb-3">Sortiert nach Leistung aus rohen Bildern mit kreisrunder ROI – ohne zeitliche Glättung. 100/100 bedeutet: alle erwarteten Zustände korrekt und kein Flickern. Bei der Messabdeckung ist „Leer P95“ kleiner besser, „Gefüllt P05“ größer besser. „Fehler“ sind falsche Schließungen im leeren sowie falsche Öffnungen im gefüllten Feld.</p>
+                          <p className="text-xs text-slate-500 mb-3">Sortiert nach Leistung aus rohen Bildern mit kreisrunder ROI – ohne zeitliche Glättung. 100/100 bedeutet: alle jeweils erwarteten Referenzlöcher waren in allen Rohbildern korrekt und flackerten nicht. Bei der 2-Schritt-Messung gilt: „Leer P95“ kleiner, „Gefüllt P05“ größer. Ein Schnellmodus bewertet nur seinen gewählten Zustand.</p>
                           <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
                             <div className="max-h-72 overflow-y-auto overflow-x-auto">
                               <table className="w-full min-w-[900px] text-left text-xs relative">
@@ -673,10 +700,18 @@ export default function App() {
                                       <td className="px-3 py-2">{res.laser}</td>
                                       <td className={`px-3 py-2 font-bold ${res.performance_score >= 95 ? 'text-emerald-600' : res.performance_score >= 80 ? 'text-amber-600' : 'text-red-600'}`} title="100 bedeutet: jedes Rohbild war korrekt und es gab kein Flickern. Niedrigere Werte bestrafen unzuverlässige Löcher, falsche Bilder, Fehler des schlechtesten Lochs und Zustandswechsel.">{res.performance_score?.toFixed(1) ?? '—'}<span className="text-slate-400 font-normal"> / 100</span></td>
                                       <td className="px-3 py-2 font-semibold text-emerald-600">
-                                        {res.empty_reliable_holes !== undefined ? `${res.empty_reliable_holes}/42 offen · ${res.filled_reliable_holes}/42 gefüllt` : `${res.score}/42 roh-offen`}
+                                        {res.empty_reliable_holes !== undefined
+                                          ? `${res.empty_reliable_holes}/42 offen · ${res.filled_reliable_holes}/42 gefüllt`
+                                          : res.quick_target === 'closed'
+                                            ? `${res.score}/${res.reference_holes ?? 42} roh-geschlossen${res.quick_mode === 'partial' ? ' (Referenz)' : ''}`
+                                            : `${res.score}/${res.reference_holes ?? 42} roh-offen`}
                                       </td>
                                       <td className="px-3 py-2">{res.raw_errors ?? '—'}<span className="text-slate-400 ml-1">schlechtestes {Math.round((res.worst_error_rate || 0) * 100)}%</span></td>
-                                      <td className="px-3 py-2">{res.filled_p05_coverage !== undefined ? `leer ≤${Math.round(res.empty_p95_coverage * 100)}% · gefüllt ≥${Math.round(res.filled_p05_coverage * 100)}%` : `leer ≤${Math.round((res.empty_p95_coverage || 0) * 100)}%`}</td>
+                                      <td className="px-3 py-2">{res.empty_reliable_holes !== undefined
+                                        ? `leer ≤${Math.round(res.empty_p95_coverage * 100)}% · gefüllt ≥${Math.round(res.filled_p05_coverage * 100)}%`
+                                        : res.quick_target === 'closed'
+                                          ? `geschlossen ≥${Math.round((res.filled_p05_coverage || 0) * 100)}%`
+                                          : `leer ≤${Math.round((res.empty_p95_coverage || 0) * 100)}%`}</td>
                                       <td className="px-3 py-2">{res.flicker_transitions ?? '—'} Wechsel</td>
                                       <td className="px-3 py-2 font-mono">{res.suggested_occupancy_threshold ?? '—'}</td>
                                       <td className="px-3 py-2 text-right">
@@ -700,7 +735,7 @@ export default function App() {
                         <div className="flex flex-col gap-3">
                           <div className="flex items-center gap-2">
                             <Button size="lg" disabled className="bg-slate-300 text-slate-500 px-6 flex-1">
-                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> Schnelles Scannen des Felds …
+                              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-slate-500" /> {status.autocalibrate_mode === 'filled' ? 'Schnelle Kalibrierung: 42 Steine …' : status.autocalibrate_mode === 'partial' ? 'Schnelle Kalibrierung: Teilbelegung …' : 'Schnelle Kalibrierung: leeres Feld …'}
                             </Button>
                             <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" size="lg" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>
                           </div>
@@ -727,7 +762,7 @@ export default function App() {
                       {status.autocalibrate_state === 2 && (
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center gap-4">
-                            <Button title="Startet die zweite Messung, nachdem alle 42 Löcher mit Steinen gefüllt wurden." size="lg" onClick={() => action('autocalibrate_step2')} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white px-6 animate-pulse">
+                            <Button title="Startet die zweite Messung, nachdem alle 42 Löcher mit Steinen gefüllt wurden." size="lg" onClick={() => action('autocalibrate_step2', advancedSettings)} className="bg-[#b1ca21] hover:bg-[#a0b51e] text-white px-6 animate-pulse">
                               <RefreshCw className="w-4 h-4 mr-2" /> Gefülltes Feld scannen (Schritt 2)
                             </Button>
                             <Button title="Bricht die laufende Kalibrierung ab und stellt die vorherigen Tiefensensorwerte wieder her." variant="outline" onClick={cancelAutocalibrate} className="text-red-500 border-red-200">Abbrechen</Button>

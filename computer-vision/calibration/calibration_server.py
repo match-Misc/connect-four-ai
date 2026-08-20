@@ -10,7 +10,7 @@ from flask_cors import CORS
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../robot-game/backend')))
-from nfc_reader import start_nfc_reader
+from nfc_reader import nfc_reader_connected, reader_connection, start_nfc_reader
 
 app = Flask(__name__, static_folder="frontend/dist", static_url_path="/static")
 CORS(app)
@@ -85,8 +85,10 @@ class UnifiedCalibrator:
         self.is_autocalibrating = False
         self.autocalibrate_state = 0 # 0: IDLE, 1: SCANNING_EMPTY, 2: WAITING_FILLED, 3: SCANNING_FILLED, 4: QUICK
         self.autocalibrate_progress = 0.0
+        self.autocalibrate_mode = None
         self.autocalibrate_results = []
         self.empty_scan_results = {}
+        self.autocalibrate_step_params = None
         self.is_color_autocalibrating = False
         self.is_color_capturing = False
         self.color_autocalibrate_progress = 0.0
@@ -399,6 +401,7 @@ class UnifiedCalibrator:
         )
         return {
             "reliable_holes": reliable_holes,
+            "total_holes": len(per_hole),
             "total_errors": total_errors,
             "total_frames": total_frames,
             "possible_transitions": sum(max(0, len(samples) - 1) for samples in coverages),
@@ -420,7 +423,8 @@ class UnifiedCalibrator:
         metric_sets = [metrics for metrics in metric_sets if metrics]
         if not metric_sets:
             return 0.0
-        reliable_ratio = sum(metrics['reliable_holes'] for metrics in metric_sets) / (42 * len(metric_sets))
+        total_holes = sum(metrics.get('total_holes', 42) for metrics in metric_sets)
+        reliable_ratio = sum(metrics['reliable_holes'] for metrics in metric_sets) / total_holes if total_holes else 0.0
         total_errors = sum(metrics['total_errors'] for metrics in metric_sets)
         total_frames = sum(metrics['total_frames'] for metrics in metric_sets)
         frame_accuracy = 1.0 - (total_errors / total_frames) if total_frames else 0.0
@@ -593,8 +597,8 @@ class UnifiedCalibrator:
     def _colour_stage_instruction(self, filled_rows):
         return (
             f"Fill the bottom {filled_rows} row{'s' if filled_rows != 1 else ''}: "
-            "black Player 1 tokens in columns 1, 3, 5 and 7; "
-            "green Player 2 tokens in columns 2, 4 and 6."
+            "green Player 1 tokens in columns 1, 3, 5 and 7; "
+            "black Player 2 tokens in columns 2, 4 and 6."
         )
 
     def _colour_rgb_candidates(self):
@@ -634,10 +638,13 @@ class UnifiedCalibrator:
         return 0.0
 
     def _slot_samples(self, frame, slots):
-        """Return robust circular BGR samples for the specified board positions."""
+        """Return the same circular centre samples used by game detection."""
         coords = self.get_hole_coordinates()
         samples, labels = [], []
-        radius = max(3, self.hole_diameter // 2 - 4)
+        # The game classifies a token from the centre quarter-radius of its
+        # circular hole ROI. Calibration must use that identical physical area;
+        # sampling the former larger half-radius mixed in the hole rim/background.
+        radius = max(3, self.hole_diameter // 4)
         for row, col in slots:
             index = row * 7 + col
             x, y = coords[index]
@@ -718,7 +725,9 @@ class UnifiedCalibrator:
         self.color_calibration_precision = precision
         self.color_calibration_stage_index = 0
         self.color_calibration_captures = []
-        self.color_calibration_rgb_candidates = []
+        # The sweep depends on the selected precision and current RGB exposure,
+        # so generate it at the start of every guided run.
+        self.color_calibration_rgb_candidates = self._colour_rgb_candidates()
         self.color_calibration_active_rgb_setting = None
         self.color_calibration_capture_progress = 0.0
         self.color_autocalibrate_progress = 0.0
@@ -802,6 +811,9 @@ class UnifiedCalibrator:
             return False
         if self._current_colour_stage() is None:
             self.status_text = "Start a new colour calibration to capture another layout."
+            return False
+        if not self.color_calibration_rgb_candidates:
+            self.status_text = "Keine RGB-Kandidaten vorbereitet. Kalibrierung bitte neu starten."
             return False
         self.is_color_capturing = True
         self.color_calibration_capture_progress = 0.0
@@ -919,30 +931,48 @@ class UnifiedCalibrator:
         return True
 
     def _autocalibrate_thread(self, step=1, mode='step', params=None):
-        if mode == 'single':
+        quick_modes = {'single', 'filled', 'partial'}
+        if mode in quick_modes:
             self.autocalibrate_state = 4
-            self.status_text = "Quick Scanning..."
+            self.autocalibrate_mode = mode
+            quick_label = {
+                'single': 'empty board',
+                'filled': 'fully filled board',
+                'partial': 'partially filled board',
+            }[mode]
+            self.status_text = f"Quick scanning {quick_label}..."
         elif step == 1:
             self.autocalibrate_state = 1
+            self.autocalibrate_mode = 'step'
             self.empty_scan_results = {}
             self.status_text = "Step 1: Scanning empty board..."
         elif step == 2:
             self.autocalibrate_state = 3
+            self.autocalibrate_mode = 'step'
             self.status_text = "Step 2: Scanning filled board..."
 
         time.sleep(0.5)
         if not self.pipeline:
             self.status_text = "RealSense not connected"
             self.autocalibrate_state = 0
+            self.autocalibrate_mode = None
             return
 
         coords = self.get_hole_coordinates()
         if not coords:
             self.status_text = "Failed: Corners not set"
             self.autocalibrate_state = 0
+            self.autocalibrate_mode = None
             return
 
-        params = params or {}
+        # Step 2 must sweep precisely the same parameter grid as step 1; its
+        # cached empty-board measurements are keyed by that exact tuple.
+        if mode == 'step' and step == 2 and self.autocalibrate_step_params:
+            params = self.autocalibrate_step_params
+        else:
+            params = params or {}
+        if mode == 'step' and step == 1:
+            self.autocalibrate_step_params = dict(params)
         exp_min, exp_max, exp_step = params.get('exp_min', 1000), params.get('exp_max', 8000), params.get('exp_step', 1000)
         gain_min, gain_max, gain_step = params.get('gain_min', 16), params.get('gain_max', 128), params.get('gain_step', 16)
         laser_min, laser_max, laser_step = params.get('laser_min', 150), params.get('laser_max', 360), params.get('laser_step', 50)
@@ -957,8 +987,37 @@ class UnifiedCalibrator:
         best_params = None
         orig_exposure, orig_gain, orig_laser = self.exposure, self.gain, self.laser_power
 
+        # Partial quick calibration uses only holes that are already detected as
+        # closed in several current frames. This avoids guessing positions, but
+        # deliberately does not claim to validate the empty holes.
+        measurement_coords = coords
+        if mode == 'partial':
+            reference_samples = [[] for _ in coords]
+            for _ in range(5):
+                with self.frame_lock:
+                    reference_frame = (self.current_raw_depth_frame.copy()
+                                       if self.current_raw_depth_frame is not None else None)
+                if reference_frame is not None:
+                    for index, (cx, cy) in enumerate(coords):
+                        coverage, _ = self.depth_roi_measurement(reference_frame, cx, cy)
+                        reference_samples[index].append(coverage)
+                time.sleep(0.08)
+            closed_indices = [
+                index for index, samples in enumerate(reference_samples)
+                if samples and float(np.median(samples)) >= self.occupancy_threshold
+            ]
+            if not closed_indices:
+                self.status_text = ('Quick calibration failed: no reliably closed holes were found. '
+                                    'Place stones in the board or use the empty-board quick scan.')
+                self.autocalibrate_state = 0
+                self.autocalibrate_mode = None
+                self.is_autocalibrating = False
+                return
+            measurement_coords = [coords[index] for index in closed_indices]
+            self.status_text = (f"Quick scanning {len(measurement_coords)}/42 currently closed reference holes...")
+
         self.autocalibrate_progress = 0.0
-        if mode == 'single' or step == 2:
+        if mode in quick_modes or step == 2:
             self.autocalibrate_results = []
         total_combinations = len(exposures) * len(gains) * len(lasers)
         current_idx = 0
@@ -996,7 +1055,7 @@ class UnifiedCalibrator:
                     # replay temporal smoothing: flicker must remain visible here.
                     coverages = []
                     depth_values = []
-                    for cx, cy in coords:
+                    for cx, cy in measurement_coords:
                         hole_coverages = []
                         hole_depths = []
                         for frame in frames_depths:
@@ -1007,31 +1066,40 @@ class UnifiedCalibrator:
                         coverages.append(hole_coverages)
                         depth_values.append(hole_depths)
 
+                    expected_closed = mode in {'filled', 'partial'} or (step == 2 and mode != 'single')
                     metrics = self._raw_occupancy_metrics(
-                        coverages, self.occupancy_threshold, expected_closed=(step == 2 and mode != 'single')
+                        coverages, self.occupancy_threshold, expected_closed=expected_closed
                     )
                     depth_variances = [np.var(values) for values in depth_values if len(values) > 1]
                     avg_var = float(np.mean(depth_variances)) if depth_variances else 999999.0
 
-                    if mode == 'single':
-                        # Empty-board quick scan: a false close in even one raw
-                        # frame disqualifies that hole from the perfect 42 score.
+                    if mode in quick_modes:
+                        # A quick scan validates one known board state only. Empty
+                        # scans seek raw-open holes; filled/partial scans seek
+                        # raw-closed holes. Temporal smoothing stays excluded.
                         performance_score = self._performance_score(metrics)
+                        reserve_rank = metrics['safety_coverage'] if expected_closed else -metrics['safety_coverage']
                         rank = (
                             performance_score, metrics['reliable_holes'], -metrics['total_errors'],
-                            -metrics['worst_error_rate'], -metrics['safety_coverage'],
+                            -metrics['worst_error_rate'], reserve_rank,
                             -metrics['transitions'], -avg_var,
                         )
                         result = {
                             'exposure': e, 'gain': g, 'laser': l,
-                            'score': metrics['reliable_holes'], 'performance_score': performance_score, 'var': avg_var,
+                            'score': metrics['reliable_holes'], 'reference_holes': metrics['total_holes'],
+                            'quick_target': 'closed' if expected_closed else 'open',
+                            'quick_mode': mode,
+                            'performance_score': performance_score, 'var': avg_var,
                             'raw_errors': metrics['total_errors'],
                             'worst_error_rate': metrics['worst_error_rate'],
-                            'empty_p95_coverage': metrics['safety_coverage'],
                             'flicker_transitions': metrics['transitions'],
                             'suggested_occupancy_threshold': None,
                             '_rank': rank,
                         }
+                        if expected_closed:
+                            result['filled_p05_coverage'] = metrics['safety_coverage']
+                        else:
+                            result['empty_p95_coverage'] = metrics['safety_coverage']
                         self.autocalibrate_results.append(result)
                         if best_rank is None or rank > best_rank:
                             best_rank, best_params = rank, (e, g, l)
@@ -1083,23 +1151,28 @@ class UnifiedCalibrator:
             self.apply_realsense_params()
             self.status_text = "Calibration Cancelled"
             self.autocalibrate_state = 0
+            self.autocalibrate_mode = None
             self.is_autocalibrating = False
             return
 
-        if mode == 'single' or step == 2:
+        if mode in quick_modes or step == 2:
             self.autocalibrate_results.sort(key=lambda item: item['_rank'], reverse=True)
             for result in self.autocalibrate_results:
                 result.pop('_rank', None)
 
-        if mode == 'single':
+        if mode in quick_modes:
             if best_params:
                 self.exposure, self.gain, self.laser_power = best_params
                 self.apply_realsense_params()
                 self.save_realsense_calibration()
-                self.status_text = f"Quick calibrated: {best_rank[0]}/42 holes never false-closed in raw frames."
+                target_label = 'raw-open' if mode == 'single' else 'raw-closed'
+                reference_holes = len(measurement_coords)
+                self.status_text = (f"Quick calibrated: {best_rank[0]}/100 performance; "
+                                    f"{reference_holes} reference holes are {target_label}.")
             else:
                 self.status_text = "Quick Calibrate Failed"
             self.autocalibrate_state = 0
+            self.autocalibrate_mode = None
         elif step == 1:
             self.autocalibrate_state = 2
             self.status_text = "Step 1 complete. Fill every hole with a token, then scan step 2."
@@ -1112,6 +1185,7 @@ class UnifiedCalibrator:
             else:
                 self.status_text = "Auto Calibrate Failed"
             self.autocalibrate_state = 0
+            self.autocalibrate_mode = None
         self.is_autocalibrating = False
 
     def save_detection_calibration(self):
@@ -1228,10 +1302,12 @@ def get_status():
         "color_calibration_capture_estimate_seconds": round(calibrator.color_calibration_capture_estimate_seconds, 1),
         "color_calibration_analysis_estimate_seconds": round(calibrator.color_calibration_analysis_estimate_seconds, 1),
         "autocalibrate_state": calibrator.autocalibrate_state,
+        "autocalibrate_mode": calibrator.autocalibrate_mode,
         "autocalibrate_progress": calibrator.autocalibrate_progress,
         "autocalibrate_results": calibrator.autocalibrate_results,
         "ui_mode": calibrator.ui_mode,
-        "nfc_connected": os.path.exists('/dev/ttyUSB0'),
+        "nfc_connected": nfc_reader_connected(),
+        "nfc_reader": reader_connection(),
         "nfc_last_tag": calibrator.nfc_last_tag
     })
 
@@ -1354,6 +1430,22 @@ def autocalibrate_single():
     params = request.get_json() if request.is_json else {}
     threading.Thread(target=calibrator._autocalibrate_thread, args=(1, 'single', params), daemon=True).start()
     return jsonify({"status": "started single"})
+
+@app.route('/api/autocalibrate_filled', methods=['POST'])
+def autocalibrate_filled():
+    if calibrator.autocalibrate_state in [1, 3, 4]:
+        return jsonify({"status": "already running"})
+    params = request.get_json() if request.is_json else {}
+    threading.Thread(target=calibrator._autocalibrate_thread, args=(1, 'filled', params), daemon=True).start()
+    return jsonify({"status": "started filled quick calibration"})
+
+@app.route('/api/autocalibrate_partial', methods=['POST'])
+def autocalibrate_partial():
+    if calibrator.autocalibrate_state in [1, 3, 4]:
+        return jsonify({"status": "already running"})
+    params = request.get_json() if request.is_json else {}
+    threading.Thread(target=calibrator._autocalibrate_thread, args=(1, 'partial', params), daemon=True).start()
+    return jsonify({"status": "started partial quick calibration"})
 
 @app.route('/api/autocalibrate_step1', methods=['POST'])
 def autocalibrate_step1():

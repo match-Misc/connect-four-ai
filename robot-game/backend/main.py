@@ -8,7 +8,7 @@ import traceback
 
 from vision_service import VisionService
 from robot_controller import RobotController
-from nfc_reader import start_nfc_reader
+from nfc_reader import nfc_reader_connected, reader_connection, start_nfc_reader
 
 app = Flask(__name__)
 CORS(app)
@@ -40,11 +40,9 @@ GRAB_ACK_WARN_INTERVAL = 15.0
 # said GRABBED, so nothing is ever re-sent to it.
 GRAB_RESEND_COOLDOWN = 10.0
 
-# Shown verbatim in the GUI's error banner, so it is German like the rest of the
-# interface. A named constant because the gravity check both sets and clears it
-# by value -- two copies of the text could drift apart and leave the banner
-# stuck on screen.
-GRAVITY_ERROR = "Schwerkraft-Prüfung fehlgeschlagen! (Hand im Weg oder schwebender Stein)"
+# Kept as a diagnostic label only. Gravity violations are intentionally not
+# shown as transient game-screen errors; the debug view exposes their state.
+GRAVITY_ERROR = "Schwerkraft-Prüfung fehlgeschlagen"
 
 DEFAULT_SETTINGS = {
     "simulation_mode": False,
@@ -129,6 +127,12 @@ class GameState:
         self.pending_board_time = 0
         self.error_msg = None
         self.invalid_stones = []
+        # Gravity remains a safety gate, but transient camera readings should
+        # not flash an error banner in the normal game UI.
+        self.gravity_violation = False
+        self.gravity_violation_count = 0
+        self.gravity_last_violation_at = None
+        self.gravity_invalid_holes = []
 
         # AI Config
         self.ai_enabled = settings["ai_enabled"]
@@ -337,23 +341,26 @@ def process_board_update():
         
     merged_board = merge_boards(cv_board, state.virtual_board)
     
-    # 1. Gravity check on merged_board
-    gravity_violation = False
+    # 1. Gravity check on merged_board. It is a safety gate for state changes
+    # and robot moves, but only the debug view reports short-lived violations.
+    gravity_invalid_holes = []
     for r in range(5):
         for c in range(7):
-            if merged_board[r][c] != 0 and merged_board[r+1][c] == 0:
-                gravity_violation = True
-                break
-        if gravity_violation:
-            break
-            
+            if merged_board[r][c] != 0 and merged_board[r + 1][c] == 0:
+                gravity_invalid_holes.append([r, c])
+
+    gravity_violation = bool(gravity_invalid_holes)
     if gravity_violation:
-        state.error_msg = GRAVITY_ERROR
+        if not state.gravity_violation:
+            state.gravity_violation_count += 1
+        state.gravity_violation = True
+        state.gravity_last_violation_at = time.time()
+        state.gravity_invalid_holes = gravity_invalid_holes
     else:
-        # If gravity is resolved but we had a gravity error, clear it immediately
-        if state.error_msg == GRAVITY_ERROR:
-            state.error_msg = None
-            
+        state.gravity_violation = False
+        state.gravity_invalid_holes = []
+
+    if not gravity_violation:
         # 2. Debounce logic
         if state.pending_board != merged_board:
             state.pending_board = merged_board
@@ -556,12 +563,23 @@ def get_board_state():
         "match_state": state.match_state,
         "error_msg": state.error_msg,
         "invalid_stones": state.invalid_stones,
+        "checks": {
+            "gravity": {
+                "active": state.gravity_violation,
+                "violation_count": state.gravity_violation_count,
+                "last_violation_at": state.gravity_last_violation_at,
+                "invalid_holes": state.gravity_invalid_holes,
+            },
+            "board_stable": state.pending_board == state.internal_board,
+            "rule_error": state.error_msg,
+        },
         "debounce_time": state.debounce_time,
         "ai_enabled": state.ai_enabled,
         "difficulty": robot_controller.difficulty_name,
         "robot_target_col": state.robot_target_col,
         "tcp_connected": robot_controller.is_robot_connected,
-        "nfc_connected": os.path.exists('/dev/ttyUSB0'),
+        "nfc_connected": nfc_reader_connected(),
+        "nfc_reader": reader_connection(),
         "nfc_data": state.nfc_data,
         "nfc_invalid_scan_time": state.nfc_invalid_scan_time,
         "nfc_timeout": state.nfc_timeout,
@@ -621,10 +639,11 @@ def execute_robot_move():
 def run_robot_move():
     print(f"\n[AI] execute_robot_move triggered. AI Enabled: {state.ai_enabled}")
 
-    # Wait until the physical board is valid before computing a move
-    if state.error_msg is not None:
-        print("[AI] Physical board in error state. Waiting...")
-    while state.error_msg is not None:
+    # Wait until the physical board is valid before computing a move. Gravity
+    # remains a background safety gate even though it is not a normal UI error.
+    if state.error_msg is not None or state.gravity_violation:
+        print("[AI] Physical board is not valid yet. Waiting...")
+    while state.error_msg is not None or state.gravity_violation:
         time.sleep(0.1)
 
     state.robot_state = "thinking"
