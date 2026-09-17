@@ -97,7 +97,11 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [tied, setTied] = useState<boolean>(false);
 
   const [nfcData, setNfcData] = useState<string | null>(null);
-  const [nfcInvalidScanTime, setNfcInvalidScanTime] = useState<number>(0);
+  // Last invalid-scan timestamp we have reacted to. A ref, not state: the poll
+  // runs inside an interval that keeps the render it was created in, so state
+  // read there is stale — every poll saw the old value and restarted the blink.
+  const nfcInvalidScanTime = useRef<number | null>(null);
+  const blinkNfcTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [nfcTimeout, setNfcTimeout] = useState<number>(15.0);
   const [blinkNfc, setBlinkNfc] = useState<boolean>(false);
   const [nfcOverwritten, setNfcOverwritten] = useState<boolean>(false);
@@ -181,10 +185,15 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
         });
       }
       if (data.nfc_invalid_scan_time !== undefined) {
-        if (data.nfc_invalid_scan_time !== nfcInvalidScanTime && data.nfc_invalid_scan_time > 0) {
-          setNfcInvalidScanTime(data.nfc_invalid_scan_time);
+        const seen = nfcInvalidScanTime.current;
+        nfcInvalidScanTime.current = data.nfc_invalid_scan_time;
+        // The first response only tells us about scans from before the page
+        // loaded, which are not worth a warning.
+        if (seen !== null && data.nfc_invalid_scan_time !== seen && data.nfc_invalid_scan_time > 0) {
           setBlinkNfc(true);
-          setTimeout(() => setBlinkNfc(false), 3000);
+          // Restart rather than stack, so a second bad scan gets its full 3s.
+          clearTimeout(blinkNfcTimer.current);
+          blinkNfcTimer.current = setTimeout(() => setBlinkNfc(false), 3000);
         }
       }
       if (data.nfc_timeout !== undefined) {
