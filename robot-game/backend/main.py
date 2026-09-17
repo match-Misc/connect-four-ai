@@ -771,13 +771,19 @@ def reset_game():
     return jsonify({"status": "success"})
 
 def gen_frames():
+    # Encode each camera frame once. Looping without waiting re-encoded the same
+    # image ~40x a second per open page, a CPU core the capture thread needed.
+    last_seq = -1
     while True:
+        seq = vision_service.wait_for_frame(last_seq)
+        if seq == last_seq:
+            # No new frame within the timeout (camera stalled or not started).
+            continue
+        last_seq = seq
         frame = vision_service.get_annotated_frame()
         if frame is not None:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        else:
-            time.sleep(0.1)
 
 @app.route("/api/video-feed")
 def video_feed():

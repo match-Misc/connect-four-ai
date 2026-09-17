@@ -7,6 +7,11 @@ import time
 import pyrealsense2 as rs
 from typing import List
 
+# Every frame here is small and processed per hole, so OpenCV's worker pool buys
+# nothing: its threads busy-wait between calls and took three cores of a
+# four-core machine away from the capture thread and the web server.
+cv2.setNumThreads(1)
+
 class VisionService:
     def __init__(self, config_dir: str = None):
         if config_dir is None:
@@ -52,9 +57,18 @@ class VisionService:
 
         # Threading
         self.frame_lock = threading.Lock()
+        # Notified on every new frame, so the video feed encodes each camera
+        # image once instead of re-encoding the last one in a busy loop.
+        self.frame_ready = threading.Condition(self.frame_lock)
+        self.frame_seq = 0
         self.current_color_frame = None
         self.current_raw_depth_frame = None
         self.capture_thread = None
+        self.threshold_filter = None
+        self.threshold_range = None
+        # (calibration key, coords) as one tuple, so a reader on another thread
+        # never pairs a new key with old coordinates.
+        self.hole_coords_cache = (None, [])
 
         # Detection runs on the capture thread so the depth history advances at
         # camera rate. Feeding it from get_board_state() instead made the
@@ -189,15 +203,18 @@ class VisionService:
                     if not color_frame or not depth_frame:
                         continue
                     
-                    c_frame = np.asanyarray(color_frame.get_data())
-                    filtered_depth = rs.threshold_filter(max(0.001, self.min_depth / 1000.0), max(0.001, self.max_depth / 1000.0)).process(depth_frame)
-                    raw_d = np.asanyarray(filtered_depth.get_data())
+                    # Copied: librealsense recycles the buffers behind these.
+                    c_frame = np.asanyarray(color_frame.get_data()).copy()
+                    filtered_depth = self._depth_threshold_filter().process(depth_frame)
+                    raw_d = np.asanyarray(filtered_depth.get_data()).copy()
 
-                    with self.frame_lock:
-                        self.current_color_frame = c_frame.copy()
-                        self.current_raw_depth_frame = raw_d.copy()
+                    with self.frame_ready:
+                        self.current_color_frame = c_frame
+                        self.current_raw_depth_frame = raw_d
+                        self.frame_seq += 1
+                        self.frame_ready.notify_all()
 
-                    detected = self._detect_board()
+                    detected = self._detect_board(c_frame, raw_d)
                     with self.board_lock:
                         self.latest_board = detected
                 except Exception:
@@ -228,21 +245,42 @@ class VisionService:
         self.color_sensor = None
         self.align = None
 
+    def _depth_threshold_filter(self):
+        # Built once per depth range rather than once per frame.
+        depth_range = (max(0.001, self.min_depth / 1000.0), max(0.001, self.max_depth / 1000.0))
+        if self.threshold_filter is None or self.threshold_range != depth_range:
+            self.threshold_filter = rs.threshold_filter(*depth_range)
+            self.threshold_range = depth_range
+        return self.threshold_filter
+
+    def wait_for_frame(self, last_seq, timeout=1.0):
+        """
+        Blocks until a frame newer than last_seq was captured, or timeout.
+        Returns the sequence number of the latest frame.
+        """
+        with self.frame_ready:
+            self.frame_ready.wait_for(lambda: self.frame_seq != last_seq, timeout)
+            return self.frame_seq
+
     def get_hole_coordinates(self):
         if len(self.corners) < 4:
             return []
+        # Only depends on calibration, which does not change between frames.
+        key = (tuple(self.corners), self.h_spacing, self.v_spacing)
+        cached_key, cached_coords = self.hole_coords_cache
+        if key == cached_key:
+            return cached_coords
         corners = np.array(self.corners)
         dst_points = np.array([[0, 0], [6 * self.h_spacing, 0], [0, 5 * self.v_spacing], [6 * self.h_spacing, 5 * self.v_spacing]], dtype=np.float32)
         src_points = corners.astype(np.float32)
-        M = cv2.getPerspectiveTransform(src_points, dst_points)
-        coords = []
-        for row in range(6):
-            for col in range(7):
-                grid_x = col * self.h_spacing
-                grid_y = row * self.v_spacing
-                grid_point = np.array([[grid_x, grid_y]], dtype=np.float32)
-                transformed = cv2.perspectiveTransform(grid_point.reshape(1, 1, 2), np.linalg.inv(M))
-                coords.append((int(transformed[0, 0, 0]), int(transformed[0, 0, 1])))
+        grid_to_image = np.linalg.inv(cv2.getPerspectiveTransform(src_points, dst_points))
+        grid_points = np.array(
+            [[col * self.h_spacing, row * self.v_spacing] for row in range(6) for col in range(7)],
+            dtype=np.float32,
+        )
+        transformed = cv2.perspectiveTransform(grid_points.reshape(-1, 1, 2), grid_to_image)
+        coords = [(int(x), int(y)) for x, y in transformed.reshape(-1, 2)]
+        self.hole_coords_cache = (key, coords)
         return coords
 
     def adjust_image(self, frame):
@@ -281,28 +319,21 @@ class VisionService:
         with self.board_lock:
             return [row[:] for row in self.latest_board]
 
-    def _detect_board(self) -> List[List[int]]:
-        # Runs on the capture thread only: mutates hole_depth_history.
+    def _detect_board(self, color_frame, depth_frame) -> List[List[int]]:
+        # Runs on the capture thread only: mutates hole_depth_history. The
+        # frames are the ones just published and must not be modified.
         board = [[0 for _ in range(7)] for _ in range(6)]
 
         if len(self.corners) != 4 or not self.calibration_complete:
             return board
 
-        with self.frame_lock:
-            color_frame = self.current_color_frame.copy() if self.current_color_frame is not None else None
-            depth_frame = self.current_raw_depth_frame.copy() if self.current_raw_depth_frame is not None else None
-
-        if color_frame is None or depth_frame is None:
-            return board
-
-        adjusted_frame = self.adjust_image(color_frame)
         coords = self.get_hole_coordinates()
-        
+
         idx = 0
         for row in range(6):
             for col in range(7):
                 x, y = coords[idx]
-                if 0 <= x < adjusted_frame.shape[1] and 0 <= y < adjusted_frame.shape[0]:
+                if 0 <= x < color_frame.shape[1] and 0 <= y < color_frame.shape[0]:
                     if 0 <= x < depth_frame.shape[1] and 0 <= y < depth_frame.shape[0]:
                         coverage, valid_pixels = self.depth_roi_measurement(depth_frame, x, y)
                         if valid_pixels.size > 0 and coverage >= self.occupancy_threshold:
@@ -318,8 +349,12 @@ class VisionService:
                             if median_d > 0:
                                 # Found a token
                                 c_radius = max(3, self.hole_diameter // 4)
-                                c_pixels = self.circular_roi_pixels(adjusted_frame, x, y, c_radius)
+                                c_pixels = self.circular_roi_pixels(color_frame, x, y, c_radius)
                                 if c_pixels.size > 0:
+                                    # The adjustment is per pixel, so applying it
+                                    # to just these pixels gives the same result
+                                    # as adjusting the whole frame first.
+                                    c_pixels = self.adjust_image(c_pixels.reshape(-1, 1, 3)).reshape(-1, 3)
                                     avg_c = np.mean(c_pixels, axis=0)[:3]
                                     dist1 = sum((a - b) ** 2 for a, b in zip(avg_c, self.player1_color))
                                     dist2 = sum((a - b) ** 2 for a, b in zip(avg_c, self.player2_color))

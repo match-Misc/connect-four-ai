@@ -522,7 +522,9 @@ class UnifiedCalibrator:
                             active_rows = self._current_colour_stage()
                             is_required = active_rows is None or row >= 6 - active_rows
                             if is_required:
-                                color = (20, 20, 20) if col % 2 == 0 else (0, 200, 0)
+                                # Same assignment as _slot_samples and the
+                                # instructions: P1 green in columns 1, 3, 5, 7.
+                                color = (0, 200, 0) if col % 2 == 0 else (20, 20, 20)
                                 cv2.circle(adjusted_frame, (x, y), self.hole_diameter // 2, color, 3)
                                 cv2.putText(adjusted_frame, "P1" if col % 2 == 0 else "P2", (x - 10, y + 5),
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
