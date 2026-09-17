@@ -38,8 +38,11 @@ const MAX_SHELLS = 16;
  * The canvas never gets more pixels than this. On the exhibition display a 1:1
  * buffer means clearing several million pixels every frame for sparks that are
  * soft blobs anyway — the browser scales the smaller buffer back up for free.
+ * Firefox on Linux draws 2D canvas on the CPU and uploads the whole buffer each
+ * frame, so on the N100 behind the 1440x2560 screen the buffer size is what
+ * decides whether a frame fits in 16ms.
  */
-const MAX_CANVAS_PIXELS = 2_100_000;
+const MAX_CANVAS_PIXELS = 1_000_000;
 
 /** Fraction of the trail left standing after one second, at the reference 60fps. */
 const TRAIL_KEEP_PER_FRAME = 0.7;

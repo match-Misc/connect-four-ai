@@ -1,7 +1,7 @@
 {
     "exposure": 1000,
     "gain": 16,
-    "laser_power": 300,
+    "laser_power": 150,
     "visual_preset": 3,
     "min_depth_mm": 405,
     "max_depth_mm": 480,

@@ -135,7 +135,10 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       // same null the backend sends while a game is still running.
       setWinner(data.winner ?? null);
       setErrorMsg(data.error_msg || null);
-      if (data.checks) setChecks(data.checks);
+      // `checks` arrives as a fresh object on every poll, so without this each
+      // poll re-rendered the whole page even with nothing changed — a hitch in
+      // the fireworks every 600ms on the exhibition PC.
+      if (data.checks) setChecks(prev => (JSON.stringify(prev) === JSON.stringify(data.checks) ? prev : data.checks));
       const stones = data.invalid_stones || NO_STONES;
       setInvalidStones(prev => (sameGrid(prev, stones) ? prev : stones));
       if (data.debounce_time !== undefined) {
@@ -278,9 +281,12 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
       <Fireworks active={celebrating} onDone={() => setCelebrating(false)} />
       <RobotWins active={consoling} onDone={() => setConsoling(false)} />
       <Draw active={tied} onDone={() => setTied(false)} />
+      {/* text-shadow rather than a drop-shadow filter, plus will-change: Firefox
+          then rasterises the text and its shadow once and only scales the layer
+          during the pulse, instead of re-blurring it every frame over the canvas. */}
       {celebrating && (
         <div className="fixed inset-0 z-[101] flex items-center justify-center pointer-events-none">
-          <h2 className="animate-win-text text-center font-black uppercase tracking-tight text-brand-green text-5xl sm:text-7xl lg:text-8xl drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
+          <h2 className="animate-win-text text-center font-black uppercase tracking-tight text-brand-green text-5xl sm:text-7xl lg:text-8xl [text-shadow:0_4px_20px_rgba(0,0,0,0.6)] will-change-transform">
             Du hast gewonnen!
           </h2>
         </div>
