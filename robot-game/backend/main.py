@@ -9,6 +9,7 @@ import traceback
 from vision_service import VisionService
 from robot_controller import RobotController
 from nfc_reader import nfc_reader_connected, reader_connection, start_nfc_reader
+import ndm_client
 
 app = Flask(__name__)
 CORS(app)
@@ -174,6 +175,22 @@ class GameState:
         self.nfc_data = None
         self.nfc_scan_time = 0
         self.nfc_invalid_scan_time = 0
+        # The dashboard's answer for the tag currently on nfc_data: a dict with
+        # id and name, or None while the lookup is running, when the tag is not
+        # registered, or when no dashboard is configured. nfc_lookup_error tells
+        # "not registered" (None) apart from "dashboard unreachable" (a string),
+        # because those need different advice at the stand.
+        self.nfc_player = None
+        self.nfc_lookup_error = None
+
+        # Dashboard reporting state. The player is latched out of nfc_player
+        # when the first token of a game lands, because nfc_data expires after
+        # nfc_timeout while a game runs for minutes -- without the latch the
+        # identity would be gone long before there is a result to report.
+        self.match_player = None
+        self.match_started_at = None
+        self.match_difficulty = None
+        self.match_result_submitted = False
 
 state = GameState(settings)
 
@@ -245,15 +262,48 @@ def start_robot_move():
     threading.Thread(target=execute_robot_move, daemon=True).start()
     return True
 
+def resolve_nfc_player(tag_data):
+    # Runs on its own thread: the lookup talks to the dashboard over the LAN,
+    # and blocking the serial reader for that long would let the reader's
+    # output pile up in the kernel buffer behind it.
+    try:
+        player = ndm_client.lookup_tag(tag_data)
+    except Exception as e:
+        # Unreachable dashboard. The tag itself was read fine, so the game is
+        # played either way -- it just cannot be credited to anyone.
+        print(f"[NDM] Tag lookup for {tag_data} failed: {e}")
+        if state.nfc_data == tag_data:
+            state.nfc_player = None
+            state.nfc_lookup_error = str(e)
+        return
+
+    # A newer scan may have replaced the tag while this lookup was in flight;
+    # the answer to the old one must not overwrite it.
+    if state.nfc_data != tag_data:
+        return
+    state.nfc_player = player
+    state.nfc_lookup_error = None
+    if player:
+        print(f"[NDM] Tag {tag_data} belongs to player {player['id']} ({player.get('name')})")
+    else:
+        print(f"[NDM] Tag {tag_data} is not registered on the dashboard")
+
 def on_nfc_scan(tag_data):
     # Only allow saving tag if the board is empty (no stones inserted)
     if count_tokens(state.internal_board) == 0 and state.robot_state == "idle":
         state.nfc_data = tag_data
         state.nfc_scan_time = time.time()
+        state.nfc_player = None
+        state.nfc_lookup_error = None
+        if ndm_client.is_enabled():
+            threading.Thread(
+                target=resolve_nfc_player, args=(tag_data,), daemon=True
+            ).start()
     else:
         # Tried scanning mid-game
         state.nfc_invalid_scan_time = time.time()
 
+ndm_client.start()
 nfc_thread = start_nfc_reader(on_nfc_scan)
 
 # We need to start/stop the vision service around the Flask app lifecycle.
@@ -321,6 +371,69 @@ def check_winner(board):
         
     return None
 
+def begin_match_if_needed():
+    """
+    Marks the start of a game at the moment its first token lands, and takes a
+    copy of whoever is registered right then.
+
+    Both the identity and the clock have to be pinned here rather than read at
+    the end: nfc_data is cleared nfc_timeout seconds after the scan, and the
+    difficulty can be toggled once the board is empty again, so by the time
+    there is a result to report neither would still describe this game.
+    """
+    if state.match_started_at is not None:
+        return
+    state.match_started_at = time.time()
+    state.match_player = state.nfc_player
+    state.match_difficulty = robot_controller.difficulty_name
+    state.match_result_submitted = False
+    if state.match_player:
+        print(
+            f"[NDM] Game started for player {state.match_player['id']} "
+            f"on difficulty {state.match_difficulty}"
+        )
+
+def clear_match():
+    """Drops the latch. The game was abandoned, reset, or has been reported."""
+    state.match_player = None
+    state.match_started_at = None
+    state.match_difficulty = None
+    state.match_result_submitted = False
+
+def finish_match(winner):
+    """
+    Reports one finished game to the dashboard. Called from both places a game
+    can end -- the detected token and the simulated one -- and guarded so the
+    same game is never submitted twice.
+    """
+    if state.match_result_submitted:
+        return
+    state.match_result_submitted = True
+
+    if not state.match_player:
+        # Nobody scanned a registered tag, so there is no one to credit. Common
+        # and fine: walk-up visitors play without a card.
+        return
+    if not ndm_client.is_enabled():
+        return
+
+    difficulty = ndm_client.server_difficulty(state.match_difficulty)
+    outcome = ndm_client.outcome_for_winner(winner)
+    if difficulty is None:
+        print(f"[NDM] No dashboard difficulty mapped for '{state.match_difficulty}'")
+        return
+    if outcome is None:
+        print(f"[NDM] No dashboard outcome for winner {winner!r}")
+        return
+
+    started = state.match_started_at or time.time()
+    ndm_client.submit_result(
+        player_id=state.match_player["id"],
+        difficulty=difficulty,
+        duration_ms=(time.time() - started) * 1000.0,
+        outcome=outcome,
+    )
+
 def merge_boards(cv_board, virtual_board):
     res = [[0]*7 for _ in range(6)]
     for r in range(6):
@@ -385,6 +498,11 @@ def process_board_update():
                 state.winner = None
                 state.turn = "human"
                 state.match_state = "in_game"
+                # An empty board is a fresh start, so the previous game's
+                # player and clock go. A game that ended properly was already
+                # reported from finish_match(); one abandoned half-played is
+                # deliberately not reported at all.
+                clear_match()
                 # Same reason reset_game_state() drops it: a column left over
                 # from the game just abandoned would otherwise be flushed to the
                 # robot on the next GRABBED ack, sending it to a column of a
@@ -426,6 +544,7 @@ def process_board_update():
                         state.internal_board = merged_board
                         state.error_msg = None
                         state.invalid_stones = []
+                        begin_match_if_needed()
 
                         if p == 2:
                             # The token the robot was holding is now on the
@@ -444,6 +563,7 @@ def process_board_update():
                             state.match_state = "finished"
                             state.robot_target_col = None
                             robot_controller.send_game_result(robot_won=(winner == 2))
+                            finish_match(winner)
                         else:
                             if state.turn == "human":
                                 state.turn = "robot"
@@ -543,6 +663,11 @@ def detection_loop():
             # Clear expired NFC data
             if state.nfc_data and time.time() - state.nfc_scan_time > state.nfc_timeout:
                 state.nfc_data = None
+                # The resolved player goes with the tag it belongs to. A game
+                # already under way is unaffected: begin_match_if_needed() took
+                # its own copy when the first token landed.
+                state.nfc_player = None
+                state.nfc_lookup_error = None
                 
         except Exception as e:
             print(f"[detection] error: {e}")
@@ -583,6 +708,13 @@ def get_board_state():
         "nfc_data": state.nfc_data,
         "nfc_invalid_scan_time": state.nfc_invalid_scan_time,
         "nfc_timeout": state.nfc_timeout,
+        # Who the scanned tag belongs to, and who this game is being played
+        # for. They differ on purpose: nfc_player follows the tag and expires
+        # with it, match_player is the copy pinned when the game started.
+        "nfc_player": state.nfc_player,
+        "nfc_lookup_error": state.nfc_lookup_error,
+        "match_player": state.match_player,
+        "ndm": ndm_client.status(),
         # Handshake state. A move sits in run_robot_move() until stone_held goes
         # true, so "grab_requested true, stone_held false" is the signature of a
         # column being withheld because the robot never sent GRABBED.
@@ -611,7 +743,9 @@ def player_move():
             state.internal_board[row][col] = player
             state.virtual_board[row][col] = player
             break
-            
+
+    begin_match_if_needed()
+
     winner = check_winner(state.internal_board)
     if winner is not None:
         state.game_over = True
@@ -619,6 +753,7 @@ def player_move():
         state.match_state = "finished"
         state.robot_target_col = None
         robot_controller.send_game_result(robot_won=(winner == 2))
+        finish_match(winner)
     else:
         state.turn = "robot"
         start_robot_move()
@@ -750,6 +885,9 @@ def reset_game_state():
     state.match_state = "in_game"
     state.error_msg = None
     state.invalid_stones = []
+    # Same reason as the board-cleared path: the reset abandons this game, so
+    # its player and clock must not carry into the next one.
+    clear_match()
 
     # Drop the column of the move the reset just cancelled, so it cannot be
     # flushed to the robot on the next GRABBED ack and send it to a column from

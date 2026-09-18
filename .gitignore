@@ -24,6 +24,9 @@ calibration.json
 # runtime settings persisted by the robot-game backend
 robot-game/backend/settings.json
 
+# results waiting to be delivered to the ndm-nfc dashboard
+robot-game/backend/ndm_queue.json
+
 # AI Code Prep
 .aicodeprep-gui
 fullcode.txt# pixi environments

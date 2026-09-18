@@ -169,6 +169,48 @@ The game integrates with the `connect_four_ai` package:
 - **JSON Messages**: Bitmasks exchanged as `{"player1": int, "player2": int}`
 - **Real-time Updates**: Game polls detection server at 30 FPS
 
+## NFC-Dashboard (ndm-nfc)
+
+Ist das Dashboard konfiguriert, wird beim Auflegen der Karte der Spieler
+aufgelöst und nach dem Spiel Schwierigkeit, Dauer und Ergebnis dorthin
+gemeldet. Ohne Konfiguration läuft das Spiel unverändert weiter, es wird nur
+nichts gemeldet.
+
+```sh
+export NDM_BASE_URL=http://<server-LAN-adresse>:8001
+export NDM_API_KEY=<NFC_STATION_KEY des Dashboards>
+```
+
+| Variable | Bedeutung |
+| --- | --- |
+| `NDM_BASE_URL` | Basis-URL des Dashboards. Leer = Meldung abgeschaltet. |
+| `NDM_API_KEY` | Der `NFC_STATION_KEY` aus der `.env` des Dashboards. |
+| `NDM_GAME_ID` | Spiel-ID, Standard `vier_gewinnt`. |
+| `NDM_DIFFICULTY_MAP` | JSON, überschreibt einzelne Schwierigkeits-Zuordnungen. |
+| `NDM_OUTCOME_DRAW` | ID für Unentschieden, Standard `draw`. |
+| `NDM_QUEUE_FILE` | Ablage der noch nicht zugestellten Ergebnisse. |
+
+Ablauf: Die Karte wird nur bei leerem Spielfeld angenommen. Beim **ersten
+Stein** werden Spieler und Schwierigkeit festgehalten und die Uhr gestartet —
+der Tag selbst verfällt nach `nfc_timeout`, das laufende Spiel behält seinen
+Spieler trotzdem. Abgebrochene Spiele (Reset oder abgeräumtes Feld) werden
+nicht gemeldet, Spiele ohne Karte ebenfalls nicht.
+
+Ergebnisse gehen über eine Warteschlange auf Platte (`ndm_queue.json`), damit
+ein WLAN-Aussetzer oder ein Neustart des Backends kein gespieltes Spiel
+verliert. Jeder Versuch bekommt genau eine UUID, die bei jedem erneuten Senden
+wiederverwendet wird — das Dashboard legt dadurch keinen zweiten Eintrag an.
+
+Noch nicht serverseitig unterstützt: Unentschieden (`draw`) und die vierte
+Schwierigkeit `impossible` → `unmöglich`. Beide werden bereits gesendet, vom
+Dashboard mit `422` abgelehnt und bleiben in der Warteschlange; sobald der
+Server sie kennt, laufen sie von allein nach. Blockiert werden gültige
+Ergebnisse dadurch nicht. Heißt die vierte Stufe am Server anders, genügt
+`NDM_DIFFICULTY_MAP='{"impossible":"<id>"}'`.
+
+Der Status steht unter `/api/board-state` in `ndm` (Warteschlangenlänge,
+letzter Fehler) sowie in `nfc_player`, `nfc_lookup_error` und `match_player`.
+
 ## Troubleshooting
 
 ### Common Issues
