@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { cn } from './utils';
 import { ConnectFourGrid } from './components/ConnectFourGrid';
@@ -6,7 +6,7 @@ import { Draw } from './components/Draw';
 import { Fireworks } from './components/Fireworks';
 import { RobotWins } from './components/RobotWins';
 import { ThemeToggle } from './components/ThemeToggle';
-import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles, Nfc, Handshake } from 'lucide-react';
+import { Activity, Bot, User, Settings2, Bug, Gamepad2, Sparkles, Nfc, Handshake, Timer } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:8000/api`;
 
@@ -70,6 +70,72 @@ function RobotArmIcon({ size = 24, className = "" }: { size?: number, className?
   );
 }
 
+/** Shows `text` in exactly the room `placeholder` takes up, shrinking the font
+    until it fits, so a long player name never resizes the field around it. */
+function FitText({ text, placeholder }: { text: string; placeholder: string }) {
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [scale, setScale] = useState(1);
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const inner = textRef.current;
+    if (!box || !inner) return;
+    const fit = () => {
+      // Measured at full size: the width scales linearly with the font size
+      // (tracking is in em too), so one measurement gives the exact factor.
+      inner.style.fontSize = '1em';
+      const natural = inner.scrollWidth;
+      const next = natural > box.clientWidth ? box.clientWidth / natural : 1;
+      inner.style.fontSize = `${next}em`;
+      setScale(next);
+    };
+    fit();
+    // The field's font size changes at the lg breakpoint.
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [text]);
+
+  return (
+    <span ref={boxRef} className="relative inline-block">
+      <span className="invisible">{placeholder}</span>
+      <span className="absolute inset-0 flex items-center justify-center">
+        <span ref={textRef} className="whitespace-nowrap" style={{ fontSize: `${scale}em` }}>{text}</span>
+      </span>
+    </span>
+  );
+}
+
+/** Game clock, shown as m:ss. It ticks on its own so the once-a-second
+    update re-renders only this, not the whole board. */
+function GameTimer({ startedAt, stoppedAt }: { startedAt: number | null; stoppedAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  const running = startedAt !== null && stoppedAt === null;
+
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(interval);
+  }, [running]);
+
+  const elapsed = startedAt === null ? 0 : Math.max(0, (stoppedAt ?? now) - startedAt);
+  const totalSeconds = Math.floor(elapsed / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+
+  return (
+    <div className={cn(
+      "flex items-center gap-3 font-black text-3xl lg:text-5xl tabular-nums transition-colors duration-300",
+      running ? "text-gray-800 dark:text-gray-100" : "text-gray-400 dark:text-gray-600"
+    )}>
+      <Timer className="w-8 h-8 lg:w-12 lg:h-12" />
+      {minutes}:{seconds}
+    </div>
+  );
+}
+
 function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [board, setBoard] = useState<number[][]>(Array(6).fill(Array(7).fill(0)));
   const [turn, setTurn] = useState<string>('human');
@@ -97,6 +163,11 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   const [tied, setTied] = useState<boolean>(false);
 
   const [nfcData, setNfcData] = useState<string | null>(null);
+  // Name shown on the human's turn field instead of "Mensch". The backend's
+  // match_player is pinned at the first stone and lasts the whole game;
+  // before that, nfc_player follows the scanned tag and expires with it after
+  // nfc_timeout. Both are cleared on a reset, so the field falls back then too.
+  const [playerName, setPlayerName] = useState<string | null>(null);
   // Last invalid-scan timestamp we have reacted to. A ref, not state: the poll
   // runs inside an interval that keeps the render it was created in, so state
   // read there is stale — every poll saw the old value and restarted the blink.
@@ -120,6 +191,10 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
   // covers our own in-flight change, and it expires regardless, so a POST that
   // never landed cannot freeze the UI on a value the backend does not have.
   const pendingDifficulty = useRef<{ value: string; until: number } | null>(null);
+  // The game clock starts with the human's first stone and stops when the game
+  // ends; an empty board (a new game) resets it.
+  const [timerStart, setTimerStart] = useState<number | null>(null);
+  const [timerStop, setTimerStop] = useState<number | null>(null);
 
   const fetchBoardState = async () => {
     try {
@@ -184,6 +259,7 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
           return data.nfc_data;
         });
       }
+      setPlayerName(data.match_player?.name || data.nfc_player?.name || null);
       if (data.nfc_invalid_scan_time !== undefined) {
         const seen = nfcInvalidScanTime.current;
         nfcInvalidScanTime.current = data.nfc_invalid_scan_time;
@@ -215,6 +291,22 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
     const interval = setInterval(fetchBoardState, celebrating || consoling || tied ? 600 : 150);
     return () => clearInterval(interval);
   }, [celebrating, consoling, tied]);
+
+  useEffect(() => {
+    const cells = board.flat();
+    if (cells.every(cell => cell === 0)) {
+      setTimerStart(null);
+      setTimerStop(null);
+    } else if (timerStart === null && cells.includes(1)) {
+      setTimerStart(Date.now());
+    }
+  }, [board, timerStart]);
+
+  useEffect(() => {
+    if (gameOver && timerStart !== null && timerStop === null) {
+      setTimerStop(Date.now());
+    }
+  }, [gameOver, timerStart, timerStop]);
 
   useEffect(() => {
     if (aiEnabled && turn === 'robot' && robotState === 'idle') {
@@ -342,23 +434,30 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
             </div>
           </div>
 
-          {/* Difficulty Selector */}
-          <div className="flex flex-wrap justify-center gap-1 bg-gray-100 dark:bg-gray-800 p-2 rounded-2xl mt-4 lg:mt-8">
-            {DIFFICULTIES.map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => {
-                  pendingDifficulty.current = { value, until: Date.now() + 2000 };
-                  setDifficulty(value);
-                }}
-                className={cn(
-                  "px-6 py-3.5 lg:px-10 lg:py-5 rounded-xl text-xl lg:text-3xl font-black transition-all",
-                  difficulty === value ? "bg-white dark:bg-gray-700 shadow-md text-brand-green scale-105" : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                )}
-              >
-                {label}
-              </button>
-            ))}
+          {/* Difficulty Selector, with the game clock to its left. The flanking
+              flex-1 columns keep the buttons centred like the turn row below. */}
+          <div className="flex items-center w-full mt-4 lg:mt-8">
+            <div className="flex-1 flex justify-end pr-8 lg:pr-12">
+              <GameTimer startedAt={timerStart} stoppedAt={timerStop} />
+            </div>
+            <div className="flex flex-wrap justify-center gap-1 bg-gray-100 dark:bg-gray-800 p-2 rounded-2xl">
+              {DIFFICULTIES.map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => {
+                    pendingDifficulty.current = { value, until: Date.now() + 2000 };
+                    setDifficulty(value);
+                  }}
+                  className={cn(
+                    "px-6 py-3.5 lg:px-10 lg:py-5 rounded-xl text-xl lg:text-3xl font-black transition-all",
+                    difficulty === value ? "bg-white dark:bg-gray-700 shadow-md text-brand-green scale-105" : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1" />
           </div>
 
           <div className="flex items-center w-full mt-2 lg:mt-4">
@@ -373,8 +472,11 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                   : "text-gray-400 dark:text-gray-600",
                 blinkNfc ? "animate-pulse text-red-500" : ""
               )}>
-                <Nfc className="w-8 h-8 lg:w-10 lg:h-10" />
-                {nfcOverwritten ? "Überschrieben" : nfcData ? "NFC registriert" : "NFC-Tag"}
+                <Nfc className="w-8 h-8 lg:w-10 lg:h-10 shrink-0" />
+                {/* Two lines, so the long label does not push the turn fields right. */}
+                <span className="leading-tight">
+                  {nfcOverwritten ? "Überschrieben" : nfcData ? <>NFC-<br />registriert</> : "NFC-Tag"}
+                </span>
               </div>
             </div>
 
@@ -389,7 +491,10 @@ function GameBoard({ showDebug }: { showDebug: boolean }) {
                   ? "bg-brand-green/20 text-green-900 dark:text-brand-green border-brand-green scale-105 shadow-lg"
                   : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600 border-transparent opacity-60"
               )}>
-                <User className="w-12 h-12 lg:w-16 lg:h-16" /> Mensch
+                <User className="w-12 h-12 lg:w-16 lg:h-16 shrink-0" />
+                {/* The name takes the room "Mensch" does and scales its font to fit,
+                    so the field keeps its size whatever name is on it. */}
+                <FitText text={playerName ?? "Mensch"} placeholder="Mensch" />
               </div>
               <div className={cn(
                 "flex items-center gap-5 px-10 py-6 lg:px-14 lg:py-8 rounded-3xl font-black text-4xl lg:text-6xl uppercase tracking-wide whitespace-nowrap transition-all duration-300 border-4 lg:border-[6px]",

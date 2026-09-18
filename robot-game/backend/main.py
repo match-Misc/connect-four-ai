@@ -377,7 +377,7 @@ def begin_match_if_needed():
     copy of whoever is registered right then.
 
     Both the identity and the clock have to be pinned here rather than read at
-    the end: nfc_data is cleared nfc_timeout seconds after the scan, and the
+    the end: the tag is cleared along with the board or by a reset, and the
     difficulty can be toggled once the board is empty again, so by the time
     there is a result to report neither would still describe this game.
     """
@@ -392,6 +392,12 @@ def begin_match_if_needed():
             f"[NDM] Game started for player {state.match_player['id']} "
             f"on difficulty {state.match_difficulty}"
         )
+
+def clear_nfc():
+    """Forgets the scanned tag and the player it resolved to."""
+    state.nfc_data = None
+    state.nfc_player = None
+    state.nfc_lookup_error = None
 
 def clear_match():
     """Drops the latch. The game was abandoned, reset, or has been reported."""
@@ -483,7 +489,11 @@ def process_board_update():
             # 3. Validation
             new_total = count_tokens(merged_board)
             if new_total == 0:
-                # User physically cleared the entire board
+                # User physically cleared the entire board. This branch also
+                # runs on every loop while the board just stays empty, so only
+                # a board that had tokens on it ends the tag's game.
+                if count_tokens(state.internal_board) > 0:
+                    clear_nfc()
                 state.internal_board = merged_board
                 state.error_msg = None
                 state.invalid_stones = []
@@ -660,14 +670,16 @@ def detection_loop():
             process_board_update()
             maintain_robot_stone()
             
-            # Clear expired NFC data
-            if state.nfc_data and time.time() - state.nfc_scan_time > state.nfc_timeout:
-                state.nfc_data = None
-                # The resolved player goes with the tag it belongs to. A game
-                # already under way is unaffected: begin_match_if_needed() took
-                # its own copy when the first token landed.
-                state.nfc_player = None
-                state.nfc_lookup_error = None
+            # Clear expired NFC data. The timeout only covers the wait for the
+            # first token: once a game is under way the tag stays until the
+            # board is cleared or the game is reset, so the GUI keeps showing
+            # who is playing.
+            if (
+                state.nfc_data
+                and count_tokens(state.internal_board) == 0
+                and time.time() - state.nfc_scan_time > state.nfc_timeout
+            ):
+                clear_nfc()
                 
         except Exception as e:
             print(f"[detection] error: {e}")
@@ -888,6 +900,7 @@ def reset_game_state():
     # Same reason as the board-cleared path: the reset abandons this game, so
     # its player and clock must not carry into the next one.
     clear_match()
+    clear_nfc()
 
     # Drop the column of the move the reset just cancelled, so it cannot be
     # flushed to the robot on the next GRABBED ack and send it to a column from
